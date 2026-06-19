@@ -510,64 +510,98 @@ display_df = display_df.rename(columns={"Line item type": "Type"})
 display_df["Revenue"]     = display_df["Revenue"].apply(lambda x: f"${x:,.2f}")
 display_df["Impressions"] = display_df["Impressions"].apply(lambda x: f"{int(x):,}")
 
-# ── Action panel (appears ABOVE the table using prev-rerun selection) ──────────
+# ── Search + Select All ───────────────────────────────────────────────────────
 
-prev_sel = st.session_state.get("_order_sel", [])
-
-if prev_sel:
-    names_preview = ", ".join(prev_sel[:4]) + ("…" if len(prev_sel) > 4 else "")
-    st.markdown(
-        f'<div class="action-panel">'
-        f'<strong>✔ {len(prev_sel)} order(s) selected:</strong> '
-        f'<span style="color:#1e40af">{names_preview}</span><br>'
-        f'<span style="font-size:0.82rem;color:#64748b">Choose what to do with them below, then click Save.</span>'
-        f'</div>',
-        unsafe_allow_html=True,
+s_col, b_col = st.columns([5, 2])
+with s_col:
+    search = st.text_input(
+        "Search orders",
+        placeholder="Type to filter — e.g. Amazon, A9, Criteo, S2S, House…",
+        label_visibility="collapsed",
     )
-    ca, cb, cc, cd = st.columns([2, 3, 1, 1])
-    with ca:
-        action_choice = st.radio(
-            "Action", ["Exclude", "Reclassify"],
-            horizontal=True, key="ord_action",
-            label_visibility="collapsed",
-        )
-    with cb:
-        if action_choice == "Reclassify":
-            reclass_to = st.selectbox(
-                "Move to", RECLASSIFY_TARGETS, key="ord_reclass_to",
-                label_visibility="collapsed",
-            )
-        else:
-            st.caption("Will be removed from all comparisons.")
-            reclass_to = None
-    with cc:
-        if st.button("💾 Save", type="primary", key="ord_save"):
-            if action_choice == "Exclude":
-                st.session_state.excl_set = list(set(st.session_state.excl_set + prev_sel))
-            else:
-                for o in prev_sel:
-                    st.session_state.reassignments[o] = reclass_to
-            st.session_state["_order_sel"] = []
+filtered_df = (
+    display_df[display_df["Order"].str.contains(search, case=False, na=False)]
+    if search else display_df
+)
+with b_col:
+    if search and not filtered_df.empty:
+        if st.button(
+            f"☑  Select all {len(filtered_df)} result{'s' if len(filtered_df) != 1 else ''}",
+            use_container_width=True,
+        ):
+            st.session_state["_order_sel"] = filtered_df["Order"].tolist()
             st.rerun()
-    with cd:
-        if st.button("✕ Clear", key="ord_clear"):
-            st.session_state["_order_sel"] = []
-            st.rerun()
-else:
-    st.caption("Click one or more rows in the table below, then choose to Exclude or Reclassify them.")
+    elif search and filtered_df.empty:
+        st.caption("No matches.")
+    else:
+        st.caption(f"{len(display_df)} orders total")
+
+# ── Action panel placeholder (rendered HERE so it appears above the table) ────
+
+action_ph = st.empty()
 
 # ── Orders table ──────────────────────────────────────────────────────────────
 
 event = st.dataframe(
-    display_df,
+    filtered_df,
     use_container_width=True,
     hide_index=True,
     on_select="rerun",
     selection_mode="multi-row",
+    height=min(400, 35 + len(filtered_df) * 35),
 )
-sel_rows = event.selection.rows
-sel_orders = display_df.iloc[sel_rows]["Order"].tolist() if sel_rows else []
-st.session_state["_order_sel"] = sel_orders
+
+# Row clicks override session state; Select All button already set it above
+if event.selection.rows:
+    st.session_state["_order_sel"] = filtered_df.iloc[event.selection.rows]["Order"].tolist()
+
+sel_orders = st.session_state.get("_order_sel", [])
+
+# ── Fill action panel placeholder (appears above the table) ───────────────────
+
+with action_ph.container():
+    if sel_orders:
+        names_preview = ", ".join(sel_orders[:5]) + ("…" if len(sel_orders) > 5 else "")
+        st.markdown(
+            f'<div class="action-panel">'
+            f'<strong>✔ {len(sel_orders)} order(s) selected:</strong> '
+            f'<span style="color:#1e40af">{names_preview}</span><br>'
+            f'<span style="font-size:0.82rem;color:#64748b">'
+            f'Choose an action and click Save.</span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+        ca, cb, cc, cd = st.columns([2, 3, 1, 1])
+        with ca:
+            action_choice = st.radio(
+                "Action", ["Exclude", "Reclassify"],
+                horizontal=True, key="ord_action",
+                label_visibility="collapsed",
+            )
+        with cb:
+            if action_choice == "Reclassify":
+                reclass_to = st.selectbox(
+                    "Move to", RECLASSIFY_TARGETS, key="ord_reclass_to",
+                    label_visibility="collapsed",
+                )
+            else:
+                st.caption("Removed from all comparisons.")
+                reclass_to = None
+        with cc:
+            if st.button("💾 Save", type="primary", key="ord_save"):
+                if action_choice == "Exclude":
+                    st.session_state.excl_set = list(set(st.session_state.excl_set + sel_orders))
+                else:
+                    for o in sel_orders:
+                        st.session_state.reassignments[o] = reclass_to
+                st.session_state["_order_sel"] = []
+                st.rerun()
+        with cd:
+            if st.button("✕ Clear", key="ord_clear"):
+                st.session_state["_order_sel"] = []
+                st.rerun()
+    else:
+        st.caption("👆 Click rows to select, or search above and use Select All.")
 
 # ── Active changes ─────────────────────────────────────────────────────────────
 
