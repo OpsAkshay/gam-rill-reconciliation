@@ -42,16 +42,10 @@ html, body, [class*="css"] { font-family: "Inter", "Segoe UI", sans-serif; }
     padding: 0.8rem 1.2rem; margin-bottom: 1rem; color: #15803d;
     font-weight: 600; font-size: 0.9rem;
 }
-.reclass-row {
-    display: flex; align-items: center; gap: 0.75rem;
-    padding: 0.45rem 0.8rem; border-radius: 6px;
-    background: #f8fafc; border: 1px solid #e2e8f0;
-    margin-bottom: 0.35rem; font-size: 0.85rem;
+.action-panel {
+    background: #eff6ff; border: 1.5px solid #93c5fd; border-radius: 10px;
+    padding: 0.9rem 1.2rem; margin-bottom: 0.6rem;
 }
-.reclass-order  { flex: 3; font-weight: 500; color: #1e293b; }
-.reclass-from   { flex: 2; color: #64748b; }
-.reclass-arrow  { color: #94a3b8; }
-.reclass-to     { flex: 2; font-weight: 600; color: #1e40af; }
 
 [data-testid="stMetric"] {
     background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px;
@@ -303,11 +297,11 @@ def render_report(tables: dict, show_levels: dict, date_range_str: str, sites: l
 # ── SESSION STATE ─────────────────────────────────────────────────────────────
 
 _ss_defaults = {
-    "report_ready":           False,
-    "link_generated":         False,
-    "excl_multiselect":       [],      # list of excluded order names
-    "reassignments":          {},      # {order_name: new_line_item_type}
-    "reclass_sel":            [],      # multiselect buffer for reclassify widget
+    "report_ready":   False,
+    "link_generated": False,
+    "excl_set":       [],   # list of excluded order names
+    "reassignments":  {},   # {order_name: new_line_item_type}
+    "_order_sel":     [],   # orders selected in the Orders table (carried across reruns)
 }
 for k, v in _ss_defaults.items():
     if k not in st.session_state:
@@ -318,8 +312,7 @@ for k, v in _ss_defaults.items():
 st.markdown("""
 <div class="banner">
   <h1>📊 GAM × Rill Reconciliation</h1>
-  <p>Upload your GAM and Rill exports, configure exclusions and reclassifications,
-     then drill into discrepancies by date, site, source group, and ad unit.</p>
+  <p>Upload your GAM and Rill exports, review order classifications, then run the discrepancy report.</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -433,15 +426,13 @@ sites = sorted(gam["site"].unique())
 date_fmt       = lambda d: d.strftime("%-d %b %Y")
 date_range_str = date_fmt(dates[0]) if len(dates) == 1 else f"{date_fmt(dates[0])} – {date_fmt(dates[-1])}"
 
-# Build a deduplicated order list (excluding auto-OB rows) for use in pickers
-all_orders_df = (
+# Original type lookup (before any user overrides)
+order_type_map = (
     gam[gam["Order"].notna() & (gam["Order"] != "OB")]
-    [["Order", "Line item type"]]
     .drop_duplicates("Order")
-    .sort_values("Order")
+    .set_index("Order")["Line item type"]
+    .to_dict()
 )
-all_order_names = all_orders_df["Order"].tolist()
-order_type_map  = dict(zip(all_orders_df["Order"], all_orders_df["Line item type"]))
 
 # ── PREPARE RILL ──────────────────────────────────────────────────────────────
 
@@ -481,133 +472,137 @@ c4.metric("Sites",      f"{len(sites)}")
 c5.metric("→ OB",       f"{n_ob:,}",     help="Blank Line item type + blank Order")
 c6.metric("→ AMAZON",   f"{n_amazon:,}", help="Price priority with Amazon/APS/TAM orders")
 
-# ── RECLASSIFY ORDERS ─────────────────────────────────────────────────────────
+# ── ORDERS ────────────────────────────────────────────────────────────────────
 
-section(
-    "🔄", "Reclassify Orders",
-    "optional — move orders from their auto-detected bucket into a different one",
+n_excl = len(st.session_state.excl_set)
+n_rc   = len(st.session_state.reassignments)
+orders_subtitle = "review classifications · select to exclude or reclassify"
+if n_excl or n_rc:
+    parts = []
+    if n_excl: parts.append(f"{n_excl} excluded")
+    if n_rc:   parts.append(f"{n_rc} reclassified")
+    orders_subtitle += "  ·  " + " · ".join(parts)
+
+section("📋", "Orders", orders_subtitle)
+
+# Build effective orders table — reflects current reassignments so user sees live state
+gam_effective = gam.copy()
+for order, new_type in st.session_state.reassignments.items():
+    gam_effective.loc[gam_effective["Order"] == order, "Line item type"] = new_type
+gam_effective["source_group"] = gam_effective["Line item type"].map(GAM_GROUP)
+
+orders_df = (
+    gam_effective[gam_effective["Order"].notna() & (gam_effective["Order"] != "OB")]
+    .groupby(["Order", "Line item type"])
+    .agg(Revenue=("Total CPM and CPC revenue", "sum"), Impressions=("Total impressions", "sum"))
+    .reset_index()
 )
-with st.expander(
-    f"Click to reclassify orders"
-    + (f"  ·  {len(st.session_state.reassignments)} active" if st.session_state.reassignments else ""),
-    expanded=False,
-):
-    st.caption(
-        "Use this when an order is in the wrong bucket after auto-detection. "
-        "For example, orders named A9, A10, K9, K10 that appear under **Price priority** "
-        "but should count as **AMAZON**."
-    )
-
-    rc_col1, rc_col2, rc_col3 = st.columns([4, 2, 1])
-    with rc_col1:
-        rc_search = st.text_input(
-            "Search orders to reclassify",
-            key="rc_search_input",
-            placeholder="e.g. A9, K10, Criteo…",
-            label_visibility="collapsed",
-        )
-    with rc_col2:
-        rc_target = st.selectbox(
-            "Move selected to",
-            options=RECLASSIFY_TARGETS,
-            key="rc_target",
-            label_visibility="collapsed",
-        )
-    with rc_col3:
-        rc_apply = st.button("▶ Apply", key="rc_apply_btn", use_container_width=True)
-
-    # Filter order list by search term
-    rc_opts = (
-        [o for o in all_order_names if rc_search.lower() in o.lower()]
-        if rc_search else all_order_names
-    )
-    selected_to_move = st.multiselect(
-        "Select orders:",
-        options=rc_opts,
-        format_func=lambda o: f"{o}  [{order_type_map.get(o, '?')}]",
-        key="reclass_sel",
-        placeholder="Type to search, then select one or more orders…",
-        label_visibility="collapsed",
-    )
-
-    if rc_apply and selected_to_move:
-        for order in selected_to_move:
-            st.session_state.reassignments[order] = rc_target
-        st.session_state.reclass_sel = []
-        st.rerun()
-
-    # Active reassignments table
-    if st.session_state.reassignments:
-        st.markdown("**Active reassignments:**")
-        to_remove = []
-        for order, new_type in list(st.session_state.reassignments.items()):
-            orig = order_type_map.get(order, "?")
-            c_name, c_from, c_arr, c_to, c_rm = st.columns([4, 2, 0.5, 2, 0.8])
-            c_name.markdown(f"**{order}**")
-            c_from.markdown(f"<span style='color:#64748b'>{orig}</span>", unsafe_allow_html=True)
-            c_arr.markdown("→")
-            c_to.markdown(f"**{new_type}**")
-            if c_rm.button("✕", key=f"rm_rc_{order}"):
-                to_remove.append(order)
-        for order in to_remove:
-            del st.session_state.reassignments[order]
-        if to_remove:
-            st.rerun()
-    else:
-        st.caption("No reassignments yet.")
-
-# ── EXCLUDE ORDERS ────────────────────────────────────────────────────────────
-
-section(
-    "🚫", "Exclude Orders",
-    "optional — remove specific orders from analysis entirely",
+orders_df["Bucket"] = orders_df["Line item type"].map(GAM_GROUP).fillna("—")
+excl_set_current = set(st.session_state.excl_set)
+orders_df["Status"] = orders_df["Order"].apply(
+    lambda o: "🚫 Excluded" if o in excl_set_current
+    else ("🔄 Reclassified" if o in st.session_state.reassignments else "")
 )
-with st.expander(
-    f"Click to manage order exclusions"
-    + (f"  ·  {len(st.session_state.excl_multiselect)} excluded" if st.session_state.excl_multiselect else ""),
-    expanded=False,
-):
-    st.caption(
-        "Excluded orders are removed from both GAM and Rill comparisons. "
-        "Use the search box to find a group of orders quickly, then bulk-exclude them."
-    )
+orders_df = orders_df.sort_values(["Bucket", "Revenue"], ascending=[True, False])
 
-    ex_col1, ex_col2 = st.columns([4, 2])
-    with ex_col1:
-        ex_search = st.text_input(
-            "Filter orders",
-            key="ex_search_input",
-            placeholder="e.g. House, DFP, test…",
+display_df = orders_df[["Order", "Line item type", "Bucket", "Revenue", "Impressions", "Status"]].copy()
+display_df = display_df.rename(columns={"Line item type": "Type"})
+display_df["Revenue"]     = display_df["Revenue"].apply(lambda x: f"${x:,.2f}")
+display_df["Impressions"] = display_df["Impressions"].apply(lambda x: f"{int(x):,}")
+
+# ── Action panel (appears ABOVE the table using prev-rerun selection) ──────────
+
+prev_sel = st.session_state.get("_order_sel", [])
+
+if prev_sel:
+    names_preview = ", ".join(prev_sel[:4]) + ("…" if len(prev_sel) > 4 else "")
+    st.markdown(
+        f'<div class="action-panel">'
+        f'<strong>✔ {len(prev_sel)} order(s) selected:</strong> '
+        f'<span style="color:#1e40af">{names_preview}</span><br>'
+        f'<span style="font-size:0.82rem;color:#64748b">Choose what to do with them below, then click Save.</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+    ca, cb, cc, cd = st.columns([2, 3, 1, 1])
+    with ca:
+        action_choice = st.radio(
+            "Action", ["Exclude", "Reclassify"],
+            horizontal=True, key="ord_action",
             label_visibility="collapsed",
         )
-    with ex_col2:
-        matching = (
-            [o for o in all_order_names if ex_search.lower() in o.lower()]
-            if ex_search else []
-        )
-        ex_bulk_label = f"☑ Exclude all {len(matching)} matching" if matching else "☑ Exclude all matching"
-        if st.button(ex_bulk_label, disabled=not matching, key="ex_bulk_btn", use_container_width=True):
-            st.session_state.excl_multiselect = list(
-                set(st.session_state.excl_multiselect + matching)
+    with cb:
+        if action_choice == "Reclassify":
+            reclass_to = st.selectbox(
+                "Move to", RECLASSIFY_TARGETS, key="ord_reclass_to",
+                label_visibility="collapsed",
             )
+        else:
+            st.caption("Will be removed from all comparisons.")
+            reclass_to = None
+    with cc:
+        if st.button("💾 Save", type="primary", key="ord_save"):
+            if action_choice == "Exclude":
+                st.session_state.excl_set = list(set(st.session_state.excl_set + prev_sel))
+            else:
+                for o in prev_sel:
+                    st.session_state.reassignments[o] = reclass_to
+            st.session_state["_order_sel"] = []
             st.rerun()
+    with cd:
+        if st.button("✕ Clear", key="ord_clear"):
+            st.session_state["_order_sel"] = []
+            st.rerun()
+else:
+    st.caption("Click one or more rows in the table below, then choose to Exclude or Reclassify them.")
 
-    excluded_list = st.multiselect(
-        "Excluded orders:",
-        options=all_order_names,
-        key="excl_multiselect",
-        placeholder="Type to search, or use the bulk filter above…",
-        label_visibility="collapsed",
-    )
+# ── Orders table ──────────────────────────────────────────────────────────────
 
-    # Clear-all shortcut
-    if excluded_list and st.button("☐ Clear all exclusions", key="ex_clear_btn"):
-        st.session_state.excl_multiselect = []
+event = st.dataframe(
+    display_df,
+    use_container_width=True,
+    hide_index=True,
+    on_select="rerun",
+    selection_mode="multi-row",
+)
+sel_rows = event.selection.rows
+sel_orders = display_df.iloc[sel_rows]["Order"].tolist() if sel_rows else []
+st.session_state["_order_sel"] = sel_orders
+
+# ── Active changes ─────────────────────────────────────────────────────────────
+
+if st.session_state.excl_set or st.session_state.reassignments:
+    st.markdown("**Active changes** — click Undo to revert individual items:")
+
+    undo_excl = []
+    for o in st.session_state.excl_set:
+        c1, c2 = st.columns([9, 1])
+        c1.markdown(f"🚫 **{o}** — excluded from analysis")
+        if c2.button("Undo", key=f"undo_e_{o}"):
+            undo_excl.append(o)
+
+    undo_rc = []
+    for o, new_t in list(st.session_state.reassignments.items()):
+        orig = order_type_map.get(o, "?")
+        c1, c2 = st.columns([9, 1])
+        c1.markdown(f"🔄 **{o}** — {orig} → **{new_t}**")
+        if c2.button("Undo", key=f"undo_r_{o}"):
+            undo_rc.append(o)
+
+    if st.button("🗑 Clear all changes", key="clear_all_changes"):
+        st.session_state.excl_set = []
+        st.session_state.reassignments = {}
         st.rerun()
 
-excl_set = set(st.session_state.excl_multiselect)
+    if undo_excl:
+        st.session_state.excl_set = [o for o in st.session_state.excl_set if o not in undo_excl]
+        st.rerun()
+    if undo_rc:
+        for o in undo_rc:
+            del st.session_state.reassignments[o]
+        st.rerun()
 
-# ── APPLY RECLASSIFICATIONS & EXCLUSIONS TO GAM ───────────────────────────────
+# ── APPLY CHANGES TO GAM ──────────────────────────────────────────────────────
 
 gam_processed = gam.copy()
 if st.session_state.reassignments:
@@ -615,24 +610,16 @@ if st.session_state.reassignments:
         gam_processed.loc[gam_processed["Order"] == order, "Line item type"] = new_type
     gam_processed["source_group"] = gam_processed["Line item type"].map(GAM_GROUP)
 
+excl_set_final = set(st.session_state.excl_set)
 gam_final = (
-    gam_processed[~gam_processed["Order"].isin(excl_set)].copy()
-    if excl_set else gam_processed.copy()
+    gam_processed[~gam_processed["Order"].isin(excl_set_final)].copy()
+    if excl_set_final else gam_processed.copy()
 )
-
-# Status summary
-status_parts = []
-if excl_set:
-    status_parts.append(f"🚫 **{len(excl_set)}** order(s) excluded")
-if st.session_state.reassignments:
-    status_parts.append(f"🔄 **{len(st.session_state.reassignments)}** order(s) reclassified")
-if status_parts:
-    st.info("  ·  ".join(status_parts) + "  —  click Run Analysis to refresh the report.")
 
 # ── WAIT FOR RUN ──────────────────────────────────────────────────────────────
 
 if not st.session_state.report_ready:
-    st.info("👈  Configure your options above, then click **Run Analysis** in the sidebar.")
+    st.info("👈  When ready, click **Run Analysis** in the sidebar to generate the report.")
     st.stop()
 
 # ── BUILD ALL TABLES ──────────────────────────────────────────────────────────
