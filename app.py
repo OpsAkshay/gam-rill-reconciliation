@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from io import BytesIO
+import streamlit.components.v1 as components
 
 st.set_page_config(
     page_title="GAM × Rill Reconciliation",
@@ -283,24 +283,22 @@ def section(icon: str, title: str, subtitle: str = ""):
     )
 
 
-def to_excel(sheets: dict) -> bytes:
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        for name, df in sheets.items():
-            df.to_excel(writer, sheet_name=name[:31], index=False)
-    return output.getvalue()
-
-
-def for_excel(df: pd.DataFrame) -> pd.DataFrame:
-    d = df.copy()
-    if "Date" in d.columns:
-        d["Date"] = d["Date"].astype(str)
-    for c in ["IMP_Disc%", "Rev_Disc%"]:
-        if c in d.columns:
-            d[c] = d[c].apply(
-                lambda v: round(v, 4) if v is not None and not (isinstance(v, float) and np.isnan(v)) else None
-            )
-    return d
+def to_csv(tables: dict) -> str:
+    """Combine all selected tables into one CSV with section headers between them."""
+    sections = []
+    for name, df in tables.items():
+        d = df.copy()
+        if "Date" in d.columns:
+            d["Date"] = d["Date"].astype(str)
+        for c in ["IMP_Disc%", "Rev_Disc%"]:
+            if c in d.columns:
+                d[c] = d[c].apply(
+                    lambda v: round(v, 4) if v is not None and not (isinstance(v, float) and np.isnan(v)) else None
+                )
+        sections.append(f"### {name}")
+        sections.append(d.to_csv(index=False))
+        sections.append("")
+    return "\n".join(sections)
 
 
 # ── SESSION STATE ─────────────────────────────────────────────────────────────
@@ -525,8 +523,9 @@ if common:
 else:
     l4 = pd.DataFrame()
 
-# ── EXCEL DOWNLOAD ────────────────────────────────────────────────────────────
+# ── DOWNLOAD & EXPORT ─────────────────────────────────────────────────────────
 
+# All computed tables — available regardless of display toggles
 level_map = {
     "Level 1 — Overall by Date":             ("L1 By Date",          l1),
     "Level 2 — By Date × Site":              ("L2 Date x Site",      l2),
@@ -535,24 +534,56 @@ level_map = {
     "Level 3c — Source Group × Site × Date": ("L3c Full Drill",      l3c),
     "Level 4 — By Ad Unit":                  ("L4 Ad Unit",          l4),
 }
-excel_sheets = {
-    sheet: for_excel(df)
-    for lvl, (sheet, df) in level_map.items()
-    if show_levels.get(lvl) and not df.empty
-}
+available_levels = [lvl for lvl, (_, df) in level_map.items() if not df.empty]
 
 section("⬇️", "Download Report")
-if excel_sheets:
-    st.download_button(
-        label="⬇️  Download as Excel  (.xlsx)",
-        data=to_excel(excel_sheets),
-        file_name="gam_rill_reconciliation.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
-    )
-    st.caption("Each selected table is a separate sheet. To share as PDF: open in Excel or Google Sheets → File → Print → Save as PDF.")
+
+# Independent download selector — separate from the display toggles
+download_selection = st.multiselect(
+    "Select tables to include in your download:",
+    options=available_levels,
+    default=available_levels,
+    key="download_levels",
+)
+
+csv_tables = {
+    name: df
+    for lvl, (name, df) in level_map.items()
+    if lvl in download_selection
+}
+
+if download_selection:
+    col_csv, col_pdf = st.columns(2)
+
+    with col_csv:
+        csv_data = to_csv(csv_tables)
+        st.download_button(
+            label="⬇️  Download as CSV",
+            data=csv_data,
+            file_name="gam_rill_reconciliation.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+        st.caption("💡 To open in Google Sheets: sheets.google.com → File → Import → Upload this CSV.")
+
+    with col_pdf:
+        components.html("""
+        <button onclick="window.parent.print()" style="
+            background-color: #dc2626;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            padding: 0.55rem 1rem;
+            width: 100%;
+            cursor: pointer;
+            font-family: sans-serif;
+        ">🖨️  Save as PDF</button>
+        """, height=45)
+        st.caption("💡 Opens your browser's print dialog — choose 'Save as PDF'.")
 else:
-    st.info("No levels selected. Enable at least one level in the sidebar.")
+    st.warning("Select at least one table above to enable download.")
 
 # ── RENDER REPORT ─────────────────────────────────────────────────────────────
 
