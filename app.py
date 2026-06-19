@@ -9,65 +9,122 @@ st.set_page_config(
     layout="wide",
 )
 
-# ── STYLING ───────────────────────────────────────────────────────────────────
+# ── GLOBAL CSS ────────────────────────────────────────────────────────────────
 
 st.markdown("""
 <style>
-    /* Sidebar background */
-    [data-testid="stSidebar"] {
-        background-color: #f0f4f8;
-    }
-    /* Main header banner */
-    .banner {
-        background: linear-gradient(90deg, #1a3a5c 0%, #2563a8 100%);
-        padding: 1.25rem 2rem;
-        border-radius: 10px;
-        color: white;
-        margin-bottom: 1.5rem;
-    }
-    .banner h1 { margin: 0; font-size: 1.6rem; color: white; }
-    .banner p  { margin: 0.25rem 0 0 0; opacity: 0.85; font-size: 0.9rem; }
-    /* Section labels */
-    .level-label {
-        background: #eef2f7;
-        border-left: 4px solid #2563a8;
-        padding: 0.5rem 1rem;
-        border-radius: 0 6px 6px 0;
-        font-weight: 600;
-        color: #1a3a5c;
-        margin: 1.5rem 0 0.5rem 0;
-        font-size: 1rem;
-    }
-    /* Metric cards */
-    [data-testid="stMetric"] {
-        background: #f8fafc;
-        border: 1px solid #dde3ea;
-        border-radius: 8px;
-        padding: 0.75rem 1rem;
-    }
-    /* Download button */
-    [data-testid="stDownloadButton"] button {
-        background-color: #2563a8;
-        color: white;
-        border-radius: 6px;
-        border: none;
-        font-weight: 600;
-    }
-    [data-testid="stDownloadButton"] button:hover {
-        background-color: #1a3a5c;
-        color: white;
-    }
-    /* Run button */
-    .stButton > button[kind="primary"] {
-        background-color: #2563a8;
-        border-radius: 6px;
-        font-weight: 600;
-        width: 100%;
-    }
-    /* Table styling */
-    [data-testid="stDataFrame"] { border-radius: 8px; }
-    /* Remove default padding on expanders */
-    .streamlit-expanderContent { padding-top: 0.5rem; }
+/* ── Typography & base ── */
+html, body, [class*="css"] { font-family: "Inter", "Segoe UI", sans-serif; }
+
+/* ── Top banner ── */
+.banner {
+    background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
+    padding: 1.5rem 2rem;
+    border-radius: 12px;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 4px 12px rgba(37,99,168,0.2);
+}
+.banner h1 { margin: 0 0 0.3rem 0; font-size: 1.7rem; color: #ffffff; font-weight: 700; }
+.banner p  { margin: 0; color: #bfdbfe; font-size: 0.92rem; }
+
+/* ── Section label ── */
+.section-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: #eff6ff;
+    border-left: 4px solid #2563a8;
+    padding: 0.6rem 1rem;
+    border-radius: 0 8px 8px 0;
+    margin: 1.8rem 0 0.6rem 0;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #1e40af;
+}
+
+/* ── Metric cards ── */
+[data-testid="stMetric"] {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 0.8rem 1rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+[data-testid="stMetricLabel"]  { font-size: 0.78rem; color: #64748b; font-weight: 500; }
+[data-testid="stMetricValue"]  { font-size: 1.4rem; color: #1e293b; font-weight: 700; }
+
+/* ── Sidebar ── */
+[data-testid="stSidebar"] {
+    background: #f1f5f9;
+    border-right: 1px solid #e2e8f0;
+}
+[data-testid="stSidebar"] h2 {
+    color: #1e293b;
+    font-size: 1rem;
+    font-weight: 700;
+    padding-bottom: 0.3rem;
+    border-bottom: 2px solid #2563a8;
+    margin-bottom: 0.8rem;
+}
+[data-testid="stSidebar"] .stCheckbox label { font-size: 0.84rem; color: #334155; }
+
+/* ── Buttons ── */
+.stButton > button[kind="primary"] {
+    background: #2563a8;
+    color: #ffffff;
+    border: none;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 0.9rem;
+    padding: 0.6rem 1.2rem;
+    width: 100%;
+    transition: background 0.2s;
+}
+.stButton > button[kind="primary"]:hover { background: #1e40af; }
+
+/* ── Download button ── */
+[data-testid="stDownloadButton"] > button {
+    background: #16a34a !important;
+    color: #ffffff !important;
+    border: none !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    width: 100%;
+    padding: 0.6rem 1.2rem !important;
+    font-size: 0.9rem !important;
+    transition: background 0.2s !important;
+}
+[data-testid="stDownloadButton"] > button:hover { background: #15803d !important; }
+
+/* ── Dataframe / table ── */
+[data-testid="stDataFrame"] > div {
+    border-radius: 10px;
+    border: 1px solid #e2e8f0;
+    overflow: hidden;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}
+
+/* ── Expander ── */
+[data-testid="stExpander"] {
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    background: #ffffff;
+}
+
+/* ── Info / warning / success ── */
+[data-testid="stAlert"] { border-radius: 8px; }
+
+/* ── Divider ── */
+hr { border-color: #e2e8f0; margin: 1rem 0; }
+
+/* ── File uploader ── */
+[data-testid="stFileUploader"] {
+    background: #ffffff;
+    border: 2px dashed #cbd5e1;
+    border-radius: 10px;
+    padding: 0.5rem;
+}
+[data-testid="stFileUploader"]:hover { border-color: #2563a8; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -111,10 +168,18 @@ ALL_LEVELS = [
     "Level 3c — Source Group × Site × Date",
     "Level 4 — By Ad Unit",
 ]
+LEVEL_DEFAULTS = {
+    "Level 1 — Overall by Date":             True,
+    "Level 2 — By Date × Site":              True,
+    "Level 3 — By Source Group":             True,
+    "Level 3b — Source Group × Site":        False,
+    "Level 3c — Source Group × Site × Date": False,
+    "Level 4 — By Ad Unit":                  True,
+}
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
 
-def clean_gam(df):
+def clean_gam(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     blank = df["Line item type"].isna() & df["Order"].isna()
     df.loc[blank, "Line item type"] = "OB"
@@ -127,7 +192,7 @@ def clean_gam(df):
     return df
 
 
-def site_from_gam(val):
+def site_from_gam(val) -> str:
     if pd.isna(val):
         return ""
     s = str(val)
@@ -137,7 +202,7 @@ def site_from_gam(val):
     return s.strip()
 
 
-def site_and_adunit_from_rill_path(val):
+def parse_rill_adunit(val):
     if pd.isna(val) or str(val).strip() == "Others":
         return "", "Others"
     parts = str(val).strip("/").split("/")
@@ -148,7 +213,7 @@ def site_and_adunit_from_rill_path(val):
     return "", parts[0]
 
 
-def site_from_rill_domain(domain):
+def site_from_domain(domain) -> str:
     if pd.isna(domain):
         return ""
     s = str(domain)
@@ -162,59 +227,60 @@ def disc_pct(gam_val, rill_val):
     return None if gam_val == 0 else (gam_val - rill_val) / gam_val * 100
 
 
-def fmt_pct(v):
+def fmt_pct(v) -> str:
     if v is None or (isinstance(v, float) and np.isnan(v)):
-        return "N/A"
+        return "—"
     icon = "🔴" if abs(v) >= ALERT_PCT else ("⚠️" if abs(v) >= WARN_PCT else "✅")
     return f"{icon} {v:+.2f}%"
 
 
 def build_disc(gam_agg, rill_agg, keys, sort_by=None):
     merged = gam_agg.merge(rill_agg, on=keys, how="outer").fillna(0)
-    merged["IMP_Disc%"] = merged.apply(
-        lambda r: disc_pct(r["GAM_IMP"], r["Rill_IMP"]), axis=1
-    )
-    merged["Rev_Disc%"] = merged.apply(
-        lambda r: disc_pct(r["GAM_Rev"], r["Rill_Rev"]), axis=1
-    )
+    merged["IMP_Disc%"] = merged.apply(lambda r: disc_pct(r["GAM_IMP"], r["Rill_IMP"]), axis=1)
+    merged["Rev_Disc%"] = merged.apply(lambda r: disc_pct(r["GAM_Rev"], r["Rill_Rev"]), axis=1)
     if sort_by:
         merged = merged.sort_values(sort_by)
     return merged
 
 
-def render_table(merged, label_renames=None):
+def render_table(merged: pd.DataFrame) -> pd.DataFrame:
     disp = merged.copy()
     if "Date" in disp.columns:
         disp["Date"] = disp["Date"].astype(str)
     for c in ["GAM_IMP", "Rill_IMP"]:
         if c in disp:
-            disp[c] = disp[c].apply(lambda x: f"{x:,.0f}")
+            disp[c] = disp[c].apply(lambda x: f"{int(x):,}")
     for c in ["GAM_Rev", "Rill_Rev"]:
         if c in disp:
             disp[c] = disp[c].apply(lambda x: f"${x:,.2f}")
     disp["IMP_Disc%"] = merged["IMP_Disc%"].apply(fmt_pct)
     disp["Rev_Disc%"] = merged["Rev_Disc%"].apply(fmt_pct)
-
-    rename = {
+    disp = disp.rename(columns={
         "GAM_IMP": "GAM Imps", "GAM_Rev": "GAM Rev",
         "Rill_IMP": "Rill Imps", "Rill_Rev": "Rill Rev",
-        "site": "Site", "source_group": "Source Group", "ad_unit": "Ad Unit",
+        "site": "Site", "source_group": "Source Group",
+        "ad_unit": "Ad Unit",
         "IMP_Disc%": "IMP Disc%", "Rev_Disc%": "Rev Disc%",
-    }
-    if label_renames:
-        rename.update(label_renames)
-    disp = disp.rename(columns=rename)
+    })
     st.dataframe(disp, use_container_width=True, hide_index=True)
 
     max_d = merged[["IMP_Disc%", "Rev_Disc%"]].abs().max().max()
     if not pd.isna(max_d):
         if max_d >= ALERT_PCT:
-            st.error(f"🔴 Max discrepancy: {max_d:.1f}% — investigate further.")
+            st.error(f"🔴 Largest discrepancy: **{max_d:.1f}%** — this needs investigation.")
         elif max_d >= WARN_PCT:
-            st.warning(f"⚠️ Max discrepancy: {max_d:.1f}% — worth reviewing.")
+            st.warning(f"⚠️ Largest discrepancy: **{max_d:.1f}%** — worth reviewing.")
         else:
-            st.success(f"✅ All within {WARN_PCT}% threshold.")
+            st.success(f"✅ All discrepancies within {WARN_PCT}% — looking good.")
     return disp
+
+
+def section(icon: str, title: str, subtitle: str = ""):
+    sub = f"<span style='font-size:0.8rem;color:#64748b;font-weight:400;margin-left:0.5rem'>{subtitle}</span>" if subtitle else ""
+    st.markdown(
+        f'<div class="section-label">{icon} {title}{sub}</div>',
+        unsafe_allow_html=True,
+    )
 
 
 def to_excel(sheets: dict) -> bytes:
@@ -225,8 +291,16 @@ def to_excel(sheets: dict) -> bytes:
     return output.getvalue()
 
 
-def section_header(text):
-    st.markdown(f'<div class="level-label">📋 {text}</div>', unsafe_allow_html=True)
+def for_excel(df: pd.DataFrame) -> pd.DataFrame:
+    d = df.copy()
+    if "Date" in d.columns:
+        d["Date"] = d["Date"].astype(str)
+    for c in ["IMP_Disc%", "Rev_Disc%"]:
+        if c in d.columns:
+            d[c] = d[c].apply(
+                lambda v: round(v, 4) if v is not None and not (isinstance(v, float) and np.isnan(v)) else None
+            )
+    return d
 
 
 # ── SESSION STATE ─────────────────────────────────────────────────────────────
@@ -239,62 +313,64 @@ if "report_ready" not in st.session_state:
 st.markdown("""
 <div class="banner">
   <h1>📊 GAM × Rill Reconciliation</h1>
-  <p>Upload your GAM and Rill exports, configure exclusions, and generate a discrepancy report.</p>
+  <p>Upload your GAM and Rill CSV exports, configure exclusions, and drill into discrepancies by date, site, source group, and ad unit.</p>
 </div>
 """, unsafe_allow_html=True)
 
 # ── SIDEBAR ───────────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.header("⚙️ Configuration")
 
-    # ── FILE UPLOADS ──────────────────────────────────────────────────────────
-    st.subheader("1 · Upload Files")
+    # ── UPLOADS ───────────────────────────────────────────────────────────────
+    st.markdown("## 📁 Upload Files")
 
-    with st.expander("GAM required columns", expanded=False):
-        st.caption(
-            "Dimensions: Date, Line item type, Order, "
-            "Ad unit (all levels), Ad unit code\n\n"
-            "Metrics: Total impressions, Total CPM and CPC revenue"
+    with st.expander("GAM — required columns"):
+        st.markdown(
+            "**Dimensions**  \nDate · Line item type · Order  \n"
+            "Ad unit (all levels) · Ad unit code\n\n"
+            "**Metrics**  \nTotal impressions  \nTotal CPM and CPC revenue"
         )
-    gam_file = st.file_uploader("GAM Export (CSV)", type="csv")
+    gam_file = st.file_uploader("GAM Export CSV", type="csv", label_visibility="collapsed")
+    if gam_file:
+        st.success(f"✅ {gam_file.name}")
+    else:
+        st.caption("No GAM file uploaded yet.")
 
-    with st.expander("Rill required columns", expanded=False):
-        st.caption(
-            "Dimensions: Ts (day), Domain, Revenue Source Type, Ad Unit\n\n"
-            "Metrics: Total Impressions, Revenue"
+    st.markdown("")
+
+    with st.expander("Rill — required columns"):
+        st.markdown(
+            "**Dimensions**  \nTs (day) · Domain  \n"
+            "Revenue Source Type · Ad Unit\n\n"
+            "**Metrics**  \nTotal Impressions · Revenue"
         )
-    rill_file = st.file_uploader("Rill Export (CSV)", type="csv")
+    rill_file = st.file_uploader("Rill Export CSV", type="csv", label_visibility="collapsed")
+    if rill_file:
+        st.success(f"✅ {rill_file.name}")
+    else:
+        st.caption("No Rill file uploaded yet.")
 
     st.divider()
 
     # ── REPORT LEVELS ─────────────────────────────────────────────────────────
-    st.subheader("2 · Report Levels")
-    st.caption("Choose which tables to include in your report.")
+    st.markdown("## 📋 Report Levels")
+    st.caption("Toggle which tables appear in the report.")
 
     show_levels = {}
-    defaults = {
-        "Level 1 — Overall by Date": True,
-        "Level 2 — By Date × Site": True,
-        "Level 3 — By Source Group": True,
-        "Level 3b — Source Group × Site": False,
-        "Level 3c — Source Group × Site × Date": False,
-        "Level 4 — By Ad Unit": True,
-    }
     for lvl in ALL_LEVELS:
-        show_levels[lvl] = st.checkbox(lvl, value=defaults[lvl])
+        show_levels[lvl] = st.checkbox(lvl, value=LEVEL_DEFAULTS[lvl], key=f"chk_{lvl}")
 
     st.divider()
 
-    # ── RUN BUTTON ────────────────────────────────────────────────────────────
-    run_clicked = st.button("▶  Run Analysis", type="primary", use_container_width=True)
+    # ── RUN ───────────────────────────────────────────────────────────────────
+    run_clicked = st.button("▶  Run Analysis", type="primary")
     if run_clicked:
         st.session_state.report_ready = True
 
 # ── VALIDATE FILES ────────────────────────────────────────────────────────────
 
 if not (gam_file and rill_file):
-    st.info("👈 Upload both CSV files in the sidebar to get started.")
+    st.info("👈  Upload both CSV files in the sidebar to get started.")
     st.stop()
 
 try:
@@ -335,43 +411,8 @@ gam["source_group"] = gam["Line item type"].map(GAM_GROUP)
 
 n_ob     = int((gam["Line item type"] == "OB").sum())
 n_amazon = int((gam["Line item type"] == "AMAZON").sum())
-
-# ── DATA SUMMARY CARDS ────────────────────────────────────────────────────────
-
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("GAM Rows Loaded",     f"{len(gam_raw):,}")
-col2.metric("Rill Rows Loaded",    f"{len(rill_raw):,}")
-col3.metric("Rows → OB",           f"{n_ob:,}",     help="Blank Line item type + blank Order")
-col4.metric("Rows → AMAZON",       f"{n_amazon:,}", help="Price priority with Amazon/APS/TAM orders")
-
-st.divider()
-
-# ── EXCLUSION PICKER ──────────────────────────────────────────────────────────
-
-with st.expander("🚫  Exclude Orders from Analysis", expanded=False):
-    st.caption(
-        "Tick any orders you want to remove before the comparison runs. "
-        "Amazon/APS/TAM orders are already reclassified — only use this for "
-        "orders that should be fully ignored."
-    )
-    all_orders = (
-        gam[["Line item type", "Order"]].drop_duplicates()
-        .dropna(subset=["Order"])
-        .query("Order != 'OB'")
-        .sort_values(["Line item type", "Order"])
-    )
-    excluded_orders: set = set()
-    for lit in all_orders["Line item type"].unique():
-        orders_in_group = all_orders[all_orders["Line item type"] == lit]["Order"].tolist()
-        st.markdown(f"**{lit}**")
-        cols = st.columns(2)
-        for i, order in enumerate(orders_in_group):
-            if cols[i % 2].checkbox(order, key=f"excl_{lit}_{order}", value=False):
-                excluded_orders.add(order)
-
-gam_final = gam[~gam["Order"].isin(excluded_orders)].copy() if excluded_orders else gam.copy()
-if excluded_orders:
-    st.info(f"Excluding **{len(excluded_orders)}** order(s) from the analysis.")
+dates    = sorted(gam["Date"].unique())
+sites    = sorted(gam["site"].unique())
 
 # ── PREPARE RILL ──────────────────────────────────────────────────────────────
 
@@ -381,138 +422,168 @@ rill["Total Impressions"] = pd.to_numeric(rill["Total Impressions"], errors="coe
 rill["Revenue"]           = pd.to_numeric(rill["Revenue"],           errors="coerce").fillna(0)
 rill["source_group"]      = rill["Revenue Source Type"].map(RILL_GROUP)
 
-parsed = rill["Ad Unit"].apply(site_and_adunit_from_rill_path)
+parsed = rill["Ad Unit"].apply(parse_rill_adunit)
 rill["site_from_path"] = parsed.apply(lambda t: t[0])
 rill["ad_unit_code"]   = parsed.apply(lambda t: t[1])
 
 domain_to_site = (
     rill[rill["site_from_path"] != ""]
     .drop_duplicates("Domain")[["Domain", "site_from_path"]]
-    .set_index("Domain")["site_from_path"]
-    .to_dict()
+    .set_index("Domain")["site_from_path"].to_dict()
 )
 rill["site"] = rill.apply(
     lambda r: r["site_from_path"] if r["site_from_path"] != ""
-    else domain_to_site.get(r["Domain"], site_from_rill_domain(r["Domain"])),
+    else domain_to_site.get(r["Domain"], site_from_domain(r["Domain"])),
     axis=1,
 )
-
 rill_data = rill[
     rill["Revenue Source Type"].notna()
     & (rill["Revenue Source Type"].str.strip() != "")
 ].copy()
 
+# ── SUMMARY METRICS ───────────────────────────────────────────────────────────
+
+section("📌", "Data Summary")
+c1, c2, c3, c4, c5, c6 = st.columns(6)
+c1.metric("GAM Rows",    f"{len(gam_raw):,}")
+c2.metric("Rill Rows",   f"{len(rill_raw):,}")
+c3.metric("Date Range",  f"{len(dates)} day{'s' if len(dates) != 1 else ''}")
+c4.metric("Sites",       f"{len(sites)}")
+c5.metric("→ OB",        f"{n_ob:,}",     help="Blank Line item type + blank Order rows")
+c6.metric("→ AMAZON",    f"{n_amazon:,}", help="Price priority with Amazon/APS/TAM order")
+
+# ── EXCLUSION PICKER ──────────────────────────────────────────────────────────
+
+section("🚫", "Exclude Orders", "optional — expand to remove specific orders before comparison")
+with st.expander("Click to manage order exclusions", expanded=False):
+    st.caption(
+        "Tick orders you want to remove entirely from the analysis. "
+        "Amazon/APS/TAM are already reclassified automatically — "
+        "only exclude here if an order should be fully ignored."
+    )
+    all_orders = (
+        gam[["Line item type", "Order"]].drop_duplicates()
+        .dropna(subset=["Order"]).query("Order != 'OB'")
+        .sort_values(["Line item type", "Order"])
+    )
+    excluded_orders: set = set()
+    for lit in all_orders["Line item type"].unique():
+        orders_in_group = all_orders[all_orders["Line item type"] == lit]["Order"].tolist()
+        st.markdown(f"**{lit}** ({len(orders_in_group)} orders)")
+        cols = st.columns(2)
+        for i, order in enumerate(orders_in_group):
+            if cols[i % 2].checkbox(order, key=f"excl_{lit}_{order}", value=False):
+                excluded_orders.add(order)
+        st.markdown("")
+
+gam_final = gam[~gam["Order"].isin(excluded_orders)].copy() if excluded_orders else gam.copy()
+if excluded_orders:
+    st.info(f"🚫 Excluding **{len(excluded_orders)}** order(s) from all comparisons.")
+
 # ── WAIT FOR RUN ──────────────────────────────────────────────────────────────
 
 if not st.session_state.report_ready:
-    st.info("👈 Select your report levels in the sidebar, then click **Run Analysis**.")
+    st.markdown("")
+    st.info("👈  Select your report levels in the sidebar, then click **Run Analysis** to generate the report.")
     st.stop()
 
-# ── BUILD ALL TABLES ──────────────────────────────────────────────────────────
+# ── BUILD TABLES ──────────────────────────────────────────────────────────────
 
-excel_sheets = {}
-
-# Level 1
+# L1
 gam_l1  = gam_final.groupby("Date").agg(GAM_IMP=("Total impressions","sum"), GAM_Rev=("Total CPM and CPC revenue","sum")).reset_index()
 rill_l1 = rill_data.groupby("Date").agg(Rill_IMP=("Total Impressions","sum"), Rill_Rev=("Revenue","sum")).reset_index()
 l1 = build_disc(gam_l1, rill_l1, ["Date"], sort_by=["Date"])
 
-# Level 2
+# L2
 gam_l2  = gam_final.groupby(["Date","site"]).agg(GAM_IMP=("Total impressions","sum"), GAM_Rev=("Total CPM and CPC revenue","sum")).reset_index()
 rill_l2 = rill_data.groupby(["Date","site"]).agg(Rill_IMP=("Total Impressions","sum"), Rill_Rev=("Revenue","sum")).reset_index()
 l2 = build_disc(gam_l2, rill_l2, ["Date","site"], sort_by=["site","Date"])
 
-# Level 3
+# L3
 gam_l3  = gam_final[gam_final["source_group"].notna()].groupby("source_group").agg(GAM_IMP=("Total impressions","sum"), GAM_Rev=("Total CPM and CPC revenue","sum")).reset_index()
 rill_l3 = rill_data[rill_data["source_group"].notna()].groupby("source_group").agg(Rill_IMP=("Total Impressions","sum"), Rill_Rev=("Revenue","sum")).reset_index()
 l3 = build_disc(gam_l3, rill_l3, ["source_group"])
 
-# Level 3b
+# L3b
 gam_l3b  = gam_final[gam_final["source_group"].notna()].groupby(["site","source_group"]).agg(GAM_IMP=("Total impressions","sum"), GAM_Rev=("Total CPM and CPC revenue","sum")).reset_index()
 rill_l3b = rill_data[rill_data["source_group"].notna()].groupby(["site","source_group"]).agg(Rill_IMP=("Total Impressions","sum"), Rill_Rev=("Revenue","sum")).reset_index()
 l3b = build_disc(gam_l3b, rill_l3b, ["site","source_group"], sort_by=["site","source_group"])
 
-# Level 3c
+# L3c
 gam_l3c  = gam_final[gam_final["source_group"].notna()].groupby(["Date","site","source_group"]).agg(GAM_IMP=("Total impressions","sum"), GAM_Rev=("Total CPM and CPC revenue","sum")).reset_index()
 rill_l3c = rill_data[rill_data["source_group"].notna()].groupby(["Date","site","source_group"]).agg(Rill_IMP=("Total Impressions","sum"), Rill_Rev=("Revenue","sum")).reset_index()
 l3c = build_disc(gam_l3c, rill_l3c, ["Date","site","source_group"], sort_by=["site","Date","source_group"])
 
-# Level 4
+# L4
 gam_ad  = set(gam_final["Ad unit code"].dropna().unique())
 rill_ad = set(rill_data[rill_data["ad_unit_code"] != "Others"]["ad_unit_code"].dropna().unique())
 common  = gam_ad & rill_ad
-gam_l4  = gam_final[gam_final["Ad unit code"].isin(common)].groupby(["site","Ad unit code"]).agg(GAM_IMP=("Total impressions","sum"), GAM_Rev=("Total CPM and CPC revenue","sum")).reset_index().rename(columns={"Ad unit code":"ad_unit"})
-rill_l4 = rill_data[rill_data["ad_unit_code"].isin(common)].groupby(["site","ad_unit_code"]).agg(Rill_IMP=("Total Impressions","sum"), Rill_Rev=("Revenue","sum")).reset_index().rename(columns={"ad_unit_code":"ad_unit"})
-l4 = build_disc(gam_l4, rill_l4, ["site","ad_unit"]).sort_values("GAM_Rev", ascending=False)
+if common:
+    gam_l4  = gam_final[gam_final["Ad unit code"].isin(common)].groupby(["site","Ad unit code"]).agg(GAM_IMP=("Total impressions","sum"), GAM_Rev=("Total CPM and CPC revenue","sum")).reset_index().rename(columns={"Ad unit code":"ad_unit"})
+    rill_l4 = rill_data[rill_data["ad_unit_code"].isin(common)].groupby(["site","ad_unit_code"]).agg(Rill_IMP=("Total Impressions","sum"), Rill_Rev=("Revenue","sum")).reset_index().rename(columns={"ad_unit_code":"ad_unit"})
+    l4 = build_disc(gam_l4, rill_l4, ["site","ad_unit"]).sort_values("GAM_Rev", ascending=False)
+else:
+    l4 = pd.DataFrame()
 
-# ── DOWNLOAD BUTTON ───────────────────────────────────────────────────────────
-
-def clean_for_excel(df):
-    d = df.copy()
-    if "Date" in d.columns:
-        d["Date"] = d["Date"].astype(str)
-    for c in ["IMP_Disc%","Rev_Disc%"]:
-        if c in d.columns:
-            d[c] = d[c].apply(lambda v: round(v, 4) if v is not None and not (isinstance(v, float) and np.isnan(v)) else None)
-    return d
+# ── EXCEL DOWNLOAD ────────────────────────────────────────────────────────────
 
 level_map = {
-    "Level 1 — Overall by Date":           ("L1 By Date",         l1),
-    "Level 2 — By Date × Site":            ("L2 Date x Site",     l2),
-    "Level 3 — By Source Group":           ("L3 Source Group",    l3),
-    "Level 3b — Source Group × Site":      ("L3b SrcGroup x Site",l3b),
-    "Level 3c — Source Group × Site × Date":("L3c Full Drill",    l3c),
-    "Level 4 — By Ad Unit":                ("L4 Ad Unit",         l4),
+    "Level 1 — Overall by Date":             ("L1 By Date",          l1),
+    "Level 2 — By Date × Site":              ("L2 Date x Site",      l2),
+    "Level 3 — By Source Group":             ("L3 Source Group",     l3),
+    "Level 3b — Source Group × Site":        ("L3b SrcGrp x Site",   l3b),
+    "Level 3c — Source Group × Site × Date": ("L3c Full Drill",      l3c),
+    "Level 4 — By Ad Unit":                  ("L4 Ad Unit",          l4),
+}
+excel_sheets = {
+    sheet: for_excel(df)
+    for lvl, (sheet, df) in level_map.items()
+    if show_levels.get(lvl) and not df.empty
 }
 
-for lvl, (sheet_name, df) in level_map.items():
-    if show_levels.get(lvl):
-        excel_sheets[sheet_name] = clean_for_excel(df)
-
+section("⬇️", "Download Report")
 if excel_sheets:
-    excel_bytes = to_excel(excel_sheets)
     st.download_button(
-        label="⬇️  Download Report (Excel)",
-        data=excel_bytes,
+        label="⬇️  Download as Excel  (.xlsx)",
+        data=to_excel(excel_sheets),
         file_name="gam_rill_reconciliation.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True,
     )
-    st.caption("💡 To share as PDF: open the Excel file → File → Print → Save as PDF, or upload to Google Sheets and export.")
+    st.caption("Each selected table is a separate sheet. To share as PDF: open in Excel or Google Sheets → File → Print → Save as PDF.")
+else:
+    st.info("No levels selected. Enable at least one level in the sidebar.")
 
-st.divider()
-
-# ── RENDER SELECTED LEVELS ────────────────────────────────────────────────────
+# ── RENDER REPORT ─────────────────────────────────────────────────────────────
 
 if show_levels.get("Level 1 — Overall by Date"):
-    section_header("Level 1 — Overall by Date")
+    section("📅", "Level 1 — Overall by Date")
     render_table(l1)
 
 if show_levels.get("Level 2 — By Date × Site"):
-    section_header("Level 2 — By Date × Site")
+    section("🌐", "Level 2 — By Date × Site")
     render_table(l2)
 
 if show_levels.get("Level 3 — By Source Group"):
-    section_header("Level 3 — By Source Group  (all dates & sites combined)")
+    section("🏷️", "Level 3 — By Source Group", "all dates & sites combined")
     st.caption(
-        "Mapping: Price priority → Prebid + Price Priority  |  "
-        "Ad Exchange + OB → ADX + OB  |  AMAZON → Amazon  |  "
-        "House → House  |  Standard → Standard"
+        "**Mapping applied:** Price priority → Prebid + Price Priority  ·  "
+        "Ad Exchange + OB → ADX + OB  ·  AMAZON → Amazon  ·  House → House  ·  Standard → Standard"
     )
     render_table(l3)
 
 if show_levels.get("Level 3b — Source Group × Site"):
-    section_header("Level 3b — Source Group × Site")
+    section("🏷️", "Level 3b — Source Group × Site")
     render_table(l3b)
 
 if show_levels.get("Level 3c — Source Group × Site × Date"):
-    section_header("Level 3c — Source Group × Site × Date")
+    section("🏷️", "Level 3c — Source Group × Site × Date")
     render_table(l3c)
 
 if show_levels.get("Level 4 — By Ad Unit"):
-    section_header("Level 4 — By Ad Unit  (top revenue units, GAM ∩ Rill only)")
-    st.caption("Ad units present in both datasets only. 'Others' excluded. Sorted by GAM revenue.")
-    if common:
+    section("📦", "Level 4 — By Ad Unit", "top revenue units · GAM ∩ Rill only · sorted by GAM revenue")
+    st.caption("Only ad units present in **both** GAM and Rill are shown. Rill's 'Others' bucket is excluded here.")
+    if not l4.empty:
         render_table(l4)
     else:
         st.info("No matching ad unit codes found between GAM and Rill.")
