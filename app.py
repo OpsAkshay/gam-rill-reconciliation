@@ -302,6 +302,39 @@ hr {{ border-color: {BORDER} !important; margin: 1.2rem 0; }}
 
 /* ── HIDE "Press Enter to apply" STREAMLIT HINT ──────────────────────────── */
 [data-testid="InputInstructions"] {{ display: none !important; }}
+
+/* ── AG GRID ORDER SEARCH ROW (floating filter, real-time) ───────────────── */
+.ag-theme-streamlit .ag-header-row-floating-filter {{
+    background: {ACCENT_BG} !important;
+    border-top: 2px solid {ACCENT_RING} !important;
+    height: 44px !important;
+}}
+.ag-theme-streamlit .ag-floating-filter-full-body {{
+    display: flex !important;
+    align-items: center !important;
+    height: 100% !important;
+    padding: 4px 6px !important;
+}}
+.ag-theme-streamlit .ag-floating-filter-input {{
+    background: {BG} !important;
+    color: {TEXT} !important;
+    border: 1.5px solid {BORDER} !important;
+    border-radius: 7px !important;
+    font-size: 0.9rem !important;
+    height: 32px !important;
+    padding: 0 10px !important;
+    width: 100% !important;
+}}
+.ag-theme-streamlit .ag-floating-filter-input:focus-within,
+.ag-theme-streamlit .ag-floating-filter-input:focus {{
+    border-color: {ACCENT} !important;
+    box-shadow: 0 0 0 3px {ACCENT_RING} !important;
+    outline: none !important;
+}}
+.ag-theme-streamlit .ag-floating-filter-input input::placeholder {{
+    color: {MUTED} !important;
+    font-size: 0.88rem !important;
+}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -675,6 +708,36 @@ order_type_map = (
     .set_index("Order")["Line item type"].to_dict()
 )
 
+# ── SIDEBAR — CHANGES PANEL (added after order_type_map is available) ─────────
+
+with st.sidebar:
+    n_excl_sb = len(st.session_state.excl_set)
+    n_rc_sb   = len(st.session_state.reassignments)
+
+    st.divider()
+    st.markdown("## 📋 Pending Changes")
+
+    if n_excl_sb == 0 and n_rc_sb == 0:
+        st.caption("No changes yet — use the Orders table to exclude or reclassify orders before running analysis.")
+    else:
+        if n_excl_sb:
+            st.markdown(f"**🚫 Excluded ({n_excl_sb})**")
+            for o in st.session_state.excl_set:
+                st.caption(f"• {o}")
+
+        if n_rc_sb:
+            st.markdown(f"**🔄 Reclassified ({n_rc_sb})**")
+            for o, new_t in st.session_state.reassignments.items():
+                orig = order_type_map.get(o, "?")
+                st.caption(f"• {o}  →  {new_t}")
+
+        if st.button("🗑 Clear all", key="sb_clear_all"):
+            st.session_state.excl_set = []
+            st.session_state.reassignments = {}
+            st.session_state.last_save_msg = ""
+            st.session_state.grid_version += 1
+            st.rerun()
+
 # ── PREPARE RILL ──────────────────────────────────────────────────────────────
 
 rill = rill_raw.copy()
@@ -776,53 +839,43 @@ with cc:
 if st.session_state.last_save_msg:
     st.success(st.session_state.last_save_msg)
 
-# ── Search (form so BOTH Enter key and the Filter button work) ────────────────
+# ── Instruction banner for real-time search ───────────────────────────────────
 
 st.markdown(
-    f"<p style='margin:0.8rem 0 0.3rem 0;font-size:0.78rem;font-weight:700;"
-    f"text-transform:uppercase;letter-spacing:0.07em;color:{MUTED}'>🔍 Search Orders</p>",
+    f"<div style='background:{ACCENT_BG};border:1px solid {ACCENT_RING};"
+    f"border-radius:8px;padding:0.55rem 1rem;margin:0.6rem 0 0.4rem 0;"
+    f"font-size:0.88rem;color:{ACCENT}'>"
+    f"🔍 <strong>Type directly in the search row inside the table</strong> "
+    f"(the blue row below the column headers) — results filter instantly as you type, "
+    f"no Enter needed.&nbsp; Header ☑ selects all visible rows."
+    f"</div>",
     unsafe_allow_html=True,
 )
-with st.form("order_search_form", border=False):
-    fc1, fc2 = st.columns([7, 1])
-    order_search = fc1.text_input(
-        "search",
-        placeholder="Type order name, type, or bucket — then press Enter or click ↵ Filter",
-        key="order_search_input",
-        label_visibility="collapsed",
-    )
-    fc2.form_submit_button("↵ Filter", use_container_width=True)
-
-if order_search:
-    mask = (
-        grid_df["Order"].str.contains(order_search, case=False, na=False)
-        | grid_df["Type"].str.contains(order_search, case=False, na=False)
-        | grid_df["Bucket"].str.contains(order_search, case=False, na=False)
-    )
-    filtered_grid = grid_df[mask].reset_index(drop=True)
-    n_match = len(filtered_grid)
-    st.caption(
-        f"**{n_match}** of {len(grid_df)} orders match '{order_search}' — "
-        f"header ☑ checkbox selects all {n_match} result{'s' if n_match != 1 else ''}"
-    )
-else:
-    filtered_grid = grid_df
-    st.caption(f"{len(grid_df)} orders total — header ☑ checkbox selects all")
 
 # ── AG Grid ───────────────────────────────────────────────────────────────────
-# Key encodes search term AND grid_version. Search change → new key → grid
-# remounts with filtered rows. Save → grid_version increments → grid remounts
-# with updated Status column. Between those two events the key is stable so the
-# component keeps its client-side selection and response captures it on Save.
+# Floating filter on Order column = real-time client-side JS filter, no Enter.
+# Key only includes grid_version (no search term — filter is handled client-side).
+# On Save: grid_version increments → grid remounts → Status column refreshes.
+# Between user typing/selecting and clicking Save, key is STABLE so the
+# component keeps its internal floating filter state and selection.
 
-gb = GridOptionsBuilder.from_dataframe(filtered_grid)
+gb = GridOptionsBuilder.from_dataframe(grid_df)
 gb.configure_selection("multiple", use_checkbox=True, header_checkbox=True)
 gb.configure_default_column(
     sortable=True, resizable=True,
     filter="agTextColumnFilter",
     floatingFilter=False,
 )
-gb.configure_column("Order",  min_width=300, flex=4)
+gb.configure_column(
+    "Order", min_width=300, flex=4,
+    filter="agTextColumnFilter",
+    floatingFilter=True,
+    filterParams={
+        "filterOptions": ["contains"],
+        "defaultOption": "contains",
+        "suppressAndOrCondition": True,
+    },
+)
 gb.configure_column("Type",   min_width=150, flex=2)
 gb.configure_column("Bucket", min_width=190, flex=2)
 gb.configure_column(
@@ -841,20 +894,21 @@ gb.configure_column("Status", min_width=130, flex=1, filter=False, sortable=Fals
 gb.configure_grid_options(
     rowHeight=38,
     headerHeight=42,
+    floatingFiltersHeight=44,
     suppressMovableColumns=True,
     animateRows=True,
     tooltipShowDelay=300,
 )
 grid_opts = gb.build()
 
-ag_key = f"orders_grid_{abs(hash(order_search or ''))}_{st.session_state.grid_version}"
+ag_key = f"orders_grid_{st.session_state.grid_version}"
 
 response = AgGrid(
-    filtered_grid,
+    grid_df,
     gridOptions=grid_opts,
     update_mode=GridUpdateMode.NO_UPDATE,
     data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
-    height=430,
+    height=460,
     theme="streamlit",
     fit_columns_on_grid_load=True,
     allow_unsafe_jscode=True,
