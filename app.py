@@ -78,7 +78,7 @@ html::before {{
 
 /* ── APP BACKGROUND ───────────────────────────────────────────────────────── */
 /* body must be transparent — white body background would cover html::before  */
-html {{ background: hotpink; }}
+html {{ background: {BG}; }}
 body {{ background: transparent; }}
 /* Transparent so html::before neon shows through */
 .stApp,
@@ -910,8 +910,9 @@ function(params) {{
     var attempts = 0;
     function applyStyles() {{
         var row = document.querySelector('.ag-header-row-floating-filter');
-        var inputs = document.querySelectorAll('.ag-floating-filter-full-body input');
-        if ((!row || inputs.length === 0) && attempts < 30) {{
+        var wrappers = document.querySelectorAll('.ag-text-field-input-wrapper');
+        var inputs = document.querySelectorAll('.ag-text-field-input');
+        if ((!row || wrappers.length === 0) && attempts < 30) {{
             attempts++;
             setTimeout(applyStyles, 100);
             return;
@@ -921,11 +922,6 @@ function(params) {{
             row.style.background = 'linear-gradient(90deg,{ACCENT_BG} 0%,{_neon_grad_end} 100%)';
             row.style.borderTop = '3px solid {ACCENT}';
         }}
-        var wrappers = document.querySelectorAll(
-            '.ag-floating-filter-full-body .ag-wrapper,' +
-            '.ag-floating-filter-full-body .ag-input-wrapper,' +
-            '.ag-floating-filter-full-body .ag-text-field-input-wrapper'
-        );
         wrappers.forEach(function(w) {{
             w.style.height = '52px';
             w.style.border = '2.5px solid {ACCENT}';
@@ -937,13 +933,11 @@ function(params) {{
             w.style.alignItems = 'center';
         }});
         inputs.forEach(function(inp) {{
-            inp.style.height = '100%';
             inp.style.fontSize = '1rem';
             inp.style.fontWeight = '500';
             inp.style.color = '{TEXT}';
             inp.style.background = 'transparent';
             inp.style.border = 'none';
-            inp.style.boxShadow = 'none';
             inp.style.outline = 'none';
             inp.style.width = '100%';
             inp.placeholder = '🔍  Type to search orders…';
@@ -952,6 +946,7 @@ function(params) {{
     setTimeout(applyStyles, 80);
 }}
 """)
+grid_opts["onGridReady"] = _on_grid_ready
 grid_opts["onFirstDataRendered"] = _on_grid_ready
 
 ag_key = f"orders_grid_{st.session_state.grid_version}"
