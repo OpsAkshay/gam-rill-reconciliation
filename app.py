@@ -13,63 +13,258 @@ st.set_page_config(
     layout="wide",
 )
 
-# ── GLOBAL CSS ────────────────────────────────────────────────────────────────
+# ── THEME (must come before CSS so dm is available) ───────────────────────────
 
-st.markdown("""
+if "dark_mode" not in st.session_state:
+    st.session_state.dark_mode = False
+dm = st.session_state.dark_mode
+
+# Palette
+BG          = "#0f172a" if dm else "#ffffff"
+SURFACE     = "#1e293b" if dm else "#f8fafc"
+SURFACE2    = "#334155" if dm else "#f1f5f9"
+BORDER      = "#334155" if dm else "#e2e8f0"
+TEXT        = "#f1f5f9" if dm else "#1e293b"
+MUTED       = "#94a3b8" if dm else "#64748b"
+ACCENT      = "#60a5fa" if dm else "#2563a8"
+ACCENT_BG   = "#172554" if dm else "#eff6ff"
+ACCENT_RING = "#1d4ed8" if dm else "#bfdbfe"
+BANNER_A    = "#1e3a8a" if dm else "#1e40af"
+BANNER_B    = "#2563a8" if dm else "#3b82f6"
+SHADOW      = "rgba(0,0,0,0.35)" if dm else "rgba(0,0,0,0.06)"
+SUCCESS_BG  = "#052e16" if dm else "#f0fdf4"
+SUCCESS_BDR = "#166534" if dm else "#86efac"
+SUCCESS_TXT = "#4ade80" if dm else "#15803d"
+
+# ── CSS ───────────────────────────────────────────────────────────────────────
+
+st.markdown(f"""
 <style>
-html, body, [class*="css"] { font-family: "Inter", "Segoe UI", sans-serif; }
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
-.banner {
-    background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
-    padding: 1.5rem 2rem; border-radius: 12px; margin-bottom: 1.5rem;
-    box-shadow: 0 4px 12px rgba(37,99,168,0.2);
-}
-.banner h1 { margin: 0 0 0.3rem 0; font-size: 1.7rem; color: #fff; font-weight: 700; }
-.banner p  { margin: 0; color: #bfdbfe; font-size: 0.92rem; }
+/* ── BASE ─────────────────────────────────────────────────────────────────── */
+html, body, [class*="css"] {{
+    font-family: 'Inter', 'Segoe UI', sans-serif;
+}}
+*, *::before, *::after {{
+    transition: background-color 0.2s ease, color 0.2s ease,
+                border-color 0.2s ease, box-shadow 0.2s ease;
+}}
 
-.section-label {
-    display: flex; align-items: center; gap: 0.5rem;
-    background: #eff6ff; border-left: 4px solid #2563a8;
-    padding: 0.6rem 1rem; border-radius: 0 8px 8px 0;
-    margin: 1.8rem 0 0.6rem 0; font-size: 0.95rem; font-weight: 600; color: #1e40af;
-}
-.date-bar {
-    background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px;
-    padding: 0.9rem 1.4rem; margin: 1.2rem 0 0.4rem 0;
-    display: flex; align-items: center; gap: 1rem;
-}
-.shared-badge {
-    background: #f0fdf4; border: 1px solid #86efac; border-radius: 10px;
-    padding: 0.8rem 1.2rem; margin-bottom: 1rem; color: #15803d;
+/* ── APP BACKGROUND ───────────────────────────────────────────────────────── */
+.stApp, [data-testid="stAppViewContainer"], .main {{
+    background-color: {BG} !important;
+}}
+.main .block-container {{
+    background-color: {BG} !important;
+    padding-top: 1.5rem;
+}}
+[data-testid="stHeader"] {{ background-color: {BG} !important; }}
+[data-testid="stDecoration"] {{ display: none; }}
+
+/* ── SIDEBAR ──────────────────────────────────────────────────────────────── */
+section[data-testid="stSidebar"] {{
+    background-color: {SURFACE} !important;
+    border-right: 1px solid {BORDER} !important;
+}}
+section[data-testid="stSidebar"] p,
+section[data-testid="stSidebar"] span,
+section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] div:not(.stButton) {{
+    color: {TEXT} !important;
+}}
+
+/* ── TEXT ─────────────────────────────────────────────────────────────────── */
+p, .stMarkdown p, div.stMarkdown {{ color: {TEXT}; }}
+small, .stCaption, [data-testid="stCaptionContainer"] p {{ color: {MUTED} !important; }}
+h1, h2, h3, h4 {{ color: {TEXT} !important; }}
+a {{ color: {ACCENT} !important; }}
+
+/* ── METRICS ──────────────────────────────────────────────────────────────── */
+[data-testid="stMetric"] {{
+    background: {SURFACE} !important;
+    border: 1px solid {BORDER} !important;
+    border-radius: 12px;
+    padding: 0.9rem 1.1rem;
+    box-shadow: 0 2px 6px {SHADOW};
+}}
+[data-testid="stMetricLabel"] {{
+    font-size: 0.72rem !important;
+    color: {MUTED} !important;
+    font-weight: 600 !important;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}}
+[data-testid="stMetricValue"] {{
+    font-size: 1.55rem !important;
+    color: {TEXT} !important;
+    font-weight: 700 !important;
+}}
+
+/* ── BUTTONS ──────────────────────────────────────────────────────────────── */
+.stButton > button[kind="primary"] {{
+    background: {ACCENT} !important;
+    color: #ffffff !important;
+    border: none !important;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 0.9rem;
+    padding: 0.55rem 1.2rem;
+    width: 100%;
+    box-shadow: 0 2px 8px {ACCENT_RING};
+}}
+.stButton > button[kind="primary"]:hover {{ filter: brightness(1.12); }}
+.stButton > button:not([kind="primary"]) {{
+    background: {SURFACE} !important;
+    color: {TEXT} !important;
+    border: 1px solid {BORDER} !important;
+    border-radius: 8px;
+    font-weight: 500;
+}}
+.stButton > button:not([kind="primary"]):hover {{
+    border-color: {ACCENT} !important;
+    color: {ACCENT} !important;
+    background: {ACCENT_BG} !important;
+}}
+
+/* ── INPUTS ───────────────────────────────────────────────────────────────── */
+[data-testid="stTextInput"] input {{
+    background: {SURFACE} !important;
+    color: {TEXT} !important;
+    border: 1.5px solid {BORDER} !important;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    height: 2.5rem;
+}}
+[data-testid="stTextInput"] input:focus {{
+    border-color: {ACCENT} !important;
+    box-shadow: 0 0 0 3px {ACCENT_RING} !important;
+}}
+[data-testid="stTextInput"] input::placeholder {{ color: {MUTED} !important; }}
+
+/* ── SELECT / MULTISELECT ─────────────────────────────────────────────────── */
+[data-testid="stSelectbox"] > div > div,
+[data-testid="stMultiSelect"] > div {{
+    background: {SURFACE} !important;
+    border-color: {BORDER} !important;
+    color: {TEXT} !important;
+    border-radius: 8px;
+}}
+[data-testid="stSelectbox"] span,
+[data-testid="stMultiSelect"] span {{ color: {TEXT} !important; }}
+
+/* ── FILE UPLOADER ────────────────────────────────────────────────────────── */
+[data-testid="stFileUploader"] {{
+    background: {SURFACE} !important;
+    border: 2px dashed {BORDER} !important;
+    border-radius: 10px;
+    padding: 0.5rem;
+}}
+[data-testid="stFileUploader"] * {{ color: {TEXT} !important; }}
+
+/* ── EXPANDERS ────────────────────────────────────────────────────────────── */
+[data-testid="stExpander"] {{
+    border: 1px solid {BORDER} !important;
+    border-radius: 10px;
+    background: {SURFACE} !important;
+    overflow: hidden;
+}}
+[data-testid="stExpander"] > details > summary {{ background: {SURFACE} !important; }}
+[data-testid="stExpander"] > details > summary > span {{ color: {TEXT} !important; }}
+[data-testid="stExpander"] > details > div {{ background: {BG} !important; }}
+
+/* ── DATAFRAME ────────────────────────────────────────────────────────────── */
+[data-testid="stDataFrame"] > div {{
+    border-radius: 10px;
+    border: 1px solid {BORDER} !important;
+    overflow: hidden;
+    box-shadow: 0 1px 4px {SHADOW};
+}}
+
+/* ── RADIO / CHECKBOX / TOGGLE ────────────────────────────────────────────── */
+[data-testid="stRadio"] label span,
+[data-testid="stRadio"] p,
+[data-testid="stCheckbox"] label span,
+[data-testid="stCheckbox"] p,
+[data-testid="stToggle"] label span,
+[data-testid="stToggle"] p {{ color: {TEXT} !important; }}
+
+/* ── ALERTS ───────────────────────────────────────────────────────────────── */
+[data-testid="stAlert"] {{ border-radius: 10px !important; }}
+
+/* ── DIVIDERS ─────────────────────────────────────────────────────────────── */
+hr {{ border-color: {BORDER} !important; margin: 1.2rem 0; }}
+
+/* ── CUSTOM COMPONENTS ────────────────────────────────────────────────────── */
+.banner {{
+    background: linear-gradient(135deg, {BANNER_A} 0%, {BANNER_B} 100%);
+    padding: 1.6rem 2rem;
+    border-radius: 14px;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 6px 24px {'rgba(30,58,138,0.55)' if dm else 'rgba(37,99,168,0.22)'};
+    position: relative;
+    overflow: hidden;
+}}
+.banner::before {{
+    content: '';
+    position: absolute; top: -40%; right: -5%;
+    width: 280px; height: 280px;
+    background: radial-gradient(circle, rgba(255,255,255,0.08) 0%, transparent 70%);
+    pointer-events: none;
+}}
+.banner h1 {{
+    margin: 0 0 0.3rem 0;
+    font-size: 1.75rem;
+    color: #ffffff !important;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+}}
+.banner p {{ margin: 0; color: #93c5fd; font-size: 0.9rem; }}
+
+.section-label {{
+    display: flex; align-items: center; gap: 0.6rem;
+    background: {ACCENT_BG};
+    border-left: 3px solid {ACCENT};
+    padding: 0.65rem 1.1rem;
+    border-radius: 0 10px 10px 0;
+    margin: 2rem 0 0.8rem 0;
+    font-size: 0.92rem;
+    font-weight: 600;
+    color: {ACCENT};
+    letter-spacing: 0.01em;
+}}
+
+.date-bar {{
+    background: {ACCENT_BG};
+    border: 1px solid {ACCENT_RING};
+    border-radius: 12px;
+    padding: 1rem 1.5rem;
+    margin: 1.2rem 0 0.5rem 0;
+    display: flex; align-items: center; gap: 1.2rem;
+}}
+
+.shared-badge {{
+    background: {SUCCESS_BG};
+    border: 1px solid {SUCCESS_BDR};
+    border-radius: 10px;
+    padding: 0.8rem 1.2rem;
+    margin-bottom: 1rem;
+    color: {SUCCESS_TXT};
     font-weight: 600; font-size: 0.9rem;
-}
-.action-panel {
-    background: #eff6ff; border: 1.5px solid #93c5fd; border-radius: 10px;
-    padding: 0.9rem 1.2rem; margin-bottom: 0.6rem;
-}
+}}
 
-[data-testid="stMetric"] {
-    background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px;
-    padding: 0.8rem 1rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-}
-[data-testid="stMetricLabel"] { font-size: 0.78rem; color: #64748b; font-weight: 500; }
-[data-testid="stMetricValue"] { font-size: 1.4rem; color: #1e293b; font-weight: 700; }
-[data-testid="stSidebar"] { background: #f1f5f9; border-right: 1px solid #e2e8f0; }
-[data-testid="stSidebar"] .stCheckbox label { font-size: 0.84rem; color: #334155; }
-.stButton > button[kind="primary"] {
-    background: #2563a8; color: #fff; border: none; border-radius: 8px;
-    font-weight: 600; font-size: 0.9rem; padding: 0.6rem 1.2rem; width: 100%;
-}
-.stButton > button[kind="primary"]:hover { background: #1e40af; }
-[data-testid="stDataFrame"] > div {
-    border-radius: 10px; border: 1px solid #e2e8f0;
-    overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.06);
-}
-[data-testid="stExpander"] { border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; }
-[data-testid="stFileUploader"] {
-    background: #fff; border: 2px dashed #cbd5e1; border-radius: 10px; padding: 0.5rem;
-}
-hr { border-color: #e2e8f0; margin: 1rem 0; }
+.action-panel {{
+    background: {ACCENT_BG};
+    border: 1.5px solid {ACCENT_RING};
+    border-radius: 12px;
+    padding: 1rem 1.3rem;
+    margin-bottom: 0.8rem;
+}}
+
+.search-box-wrap {{
+    position: relative;
+    margin-bottom: 0.5rem;
+}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -241,7 +436,7 @@ def render_table(df: pd.DataFrame):
 
 def section(icon, title, subtitle=""):
     sub = (
-        f"<span style='font-size:0.8rem;color:#64748b;font-weight:400;margin-left:0.5rem'>{subtitle}</span>"
+        f"<span style='font-size:0.8rem;color:{MUTED};font-weight:400;margin-left:0.5rem'>{subtitle}</span>"
         if subtitle else ""
     )
     st.markdown(f'<div class="section-label">{icon} {title}{sub}</div>', unsafe_allow_html=True)
@@ -252,12 +447,12 @@ def date_range_bar(date_range_str, sites):
     <div class="date-bar">
       <span style="font-size:1.5rem">📅</span>
       <div>
-        <div style="font-size:0.72rem;color:#64748b;font-weight:500;text-transform:uppercase;letter-spacing:0.05em">Analysis Period</div>
-        <div style="font-size:1.2rem;font-weight:700;color:#1e40af">{date_range_str}</div>
+        <div style="font-size:0.7rem;color:{MUTED};font-weight:600;text-transform:uppercase;letter-spacing:0.06em">Analysis Period</div>
+        <div style="font-size:1.2rem;font-weight:700;color:{ACCENT}">{date_range_str}</div>
       </div>
       <div style="margin-left:auto;text-align:right">
-        <div style="font-size:0.72rem;color:#64748b;font-weight:500;text-transform:uppercase;letter-spacing:0.05em">Sites</div>
-        <div style="font-size:0.9rem;font-weight:600;color:#1e293b">{" · ".join(sites)}</div>
+        <div style="font-size:0.7rem;color:{MUTED};font-weight:600;text-transform:uppercase;letter-spacing:0.06em">Sites</div>
+        <div style="font-size:0.9rem;font-weight:600;color:{TEXT}">{" · ".join(sites)}</div>
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -300,9 +495,8 @@ def render_report(tables: dict, show_levels: dict, date_range_str: str, sites: l
 _ss_defaults = {
     "report_ready":   False,
     "link_generated": False,
-    "excl_set":       [],   # list of excluded order names
-    "reassignments":  {},   # {order_name: new_line_item_type}
-    "_order_sel":     [],   # orders selected in the Orders table (carried across reruns)
+    "excl_set":       [],
+    "reassignments":  {},
 }
 for k, v in _ss_defaults.items():
     if k not in st.session_state:
@@ -371,8 +565,17 @@ with st.sidebar:
 
     st.divider()
 
+    # Dark / Light mode toggle
+    dm_label = "☀️  Light mode" if dm else "🌙  Dark mode"
+    new_dm = st.toggle(dm_label, value=dm, key="sidebar_dm")
+    if new_dm != dm:
+        st.session_state.dark_mode = new_dm
+        st.rerun()
+
+    st.divider()
+
     st.markdown("## 📋 Display Levels")
-    st.caption("Choose which tables appear on screen.")
+    st.caption("Choose which report tables appear on screen.")
     show_levels = {
         lvl: st.checkbox(lvl, value=LEVEL_DEFAULTS[lvl], key=f"chk_{lvl}")
         for lvl in ALL_LEVELS
@@ -427,12 +630,10 @@ sites = sorted(gam["site"].unique())
 date_fmt       = lambda d: d.strftime("%-d %b %Y")
 date_range_str = date_fmt(dates[0]) if len(dates) == 1 else f"{date_fmt(dates[0])} – {date_fmt(dates[-1])}"
 
-# Original type lookup (before any user overrides)
 order_type_map = (
     gam[gam["Order"].notna() & (gam["Order"] != "OB")]
     .drop_duplicates("Order")
-    .set_index("Order")["Line item type"]
-    .to_dict()
+    .set_index("Order")["Line item type"].to_dict()
 )
 
 # ── PREPARE RILL ──────────────────────────────────────────────────────────────
@@ -477,42 +678,41 @@ c6.metric("→ AMAZON",   f"{n_amazon:,}", help="Price priority with Amazon/APS/
 
 n_excl = len(st.session_state.excl_set)
 n_rc   = len(st.session_state.reassignments)
-orders_subtitle = "type in any column header to search · check rows · then Save"
+orders_sub = "search · check rows · choose Exclude or Reclassify · Save"
 if n_excl or n_rc:
     parts = []
     if n_excl: parts.append(f"{n_excl} excluded")
     if n_rc:   parts.append(f"{n_rc} reclassified")
-    orders_subtitle += "  ·  " + " · ".join(parts)
+    orders_sub += "  ·  " + " · ".join(parts)
 
-section("📋", "Orders", orders_subtitle)
+section("📋", "Orders", orders_sub)
 
-# Build effective orders table — reflects current reassignments so user sees live state
-gam_effective = gam.copy()
+# Build effective table (reflects current reassignments)
+gam_eff = gam.copy()
 for order, new_type in st.session_state.reassignments.items():
-    gam_effective.loc[gam_effective["Order"] == order, "Line item type"] = new_type
-gam_effective["source_group"] = gam_effective["Line item type"].map(GAM_GROUP)
+    gam_eff.loc[gam_eff["Order"] == order, "Line item type"] = new_type
+gam_eff["source_group"] = gam_eff["Line item type"].map(GAM_GROUP)
 
 orders_df = (
-    gam_effective[gam_effective["Order"].notna() & (gam_effective["Order"] != "OB")]
+    gam_eff[gam_eff["Order"].notna() & (gam_eff["Order"] != "OB")]
     .groupby(["Order", "Line item type"])
-    .agg(Revenue=("Total CPM and CPC revenue", "sum"), Impressions=("Total impressions", "sum"))
+    .agg(Revenue=("Total CPM and CPC revenue", "sum"),
+         Impressions=("Total impressions", "sum"))
     .reset_index()
 )
 orders_df["Bucket"] = orders_df["Line item type"].map(GAM_GROUP).fillna("—")
-excl_set_current = set(st.session_state.excl_set)
+excl_set_cur = set(st.session_state.excl_set)
 orders_df["Status"] = orders_df["Order"].apply(
-    lambda o: "🚫 Excluded" if o in excl_set_current
+    lambda o: "🚫 Excluded" if o in excl_set_cur
     else ("🔄 Reclassified" if o in st.session_state.reassignments else "")
 )
 orders_df = orders_df.sort_values(["Bucket", "Revenue"], ascending=[True, False]).reset_index(drop=True)
 
-# Keep Revenue/Impressions numeric so AG Grid can sort and filter them correctly
 grid_df = orders_df[["Order", "Line item type", "Bucket", "Revenue", "Impressions", "Status"]].copy()
 grid_df = grid_df.rename(columns={"Line item type": "Type"})
 
-# ── Action panel (always visible; Save reads AG Grid selection below) ─────────
+# ── Action panel (always visible; Save reads AG Grid selection) ───────────────
 
-st.caption("Use the filter row in each column to search, check rows to select, then choose an action:")
 ca, cb, cc = st.columns([2, 3, 1])
 with ca:
     action_choice = st.radio(
@@ -530,51 +730,88 @@ with cb:
         st.caption("Selected orders will be removed from all comparisons.")
         reclass_to = None
 with cc:
-    # Render button here for layout; handle it AFTER AgGrid so response is defined
     save_clicked = st.button("💾 Save", type="primary", key="ord_save")
 
-# ── AG Grid table — all interaction is client-side, zero reruns on scroll/select ──
+# ── Search input (filters before AG Grid — largest, most visible) ─────────────
 
-gb = GridOptionsBuilder.from_dataframe(grid_df)
+sc1, sc2 = st.columns([5, 1])
+with sc1:
+    order_search = st.text_input(
+        "search",
+        placeholder="🔍  Search by order name, type, or bucket…",
+        key="order_search",
+        label_visibility="collapsed",
+    )
+with sc2:
+    pass  # spacer
+
+if order_search:
+    mask = (
+        grid_df["Order"].str.contains(order_search, case=False, na=False)
+        | grid_df["Type"].str.contains(order_search, case=False, na=False)
+        | grid_df["Bucket"].str.contains(order_search, case=False, na=False)
+    )
+    filtered_grid = grid_df[mask].reset_index(drop=True)
+    st.caption(
+        f"**{len(filtered_grid)}** of {len(grid_df)} orders match '{order_search}' "
+        f"— use the header ☑ checkbox to select all results"
+    )
+else:
+    filtered_grid = grid_df
+    st.caption(f"{len(grid_df)} orders total — use the header ☑ checkbox to select all")
+
+# ── AG Grid ───────────────────────────────────────────────────────────────────
+
+gb = GridOptionsBuilder.from_dataframe(filtered_grid)
 gb.configure_selection("multiple", use_checkbox=True, header_checkbox=True)
+
+# Default: all columns get text filter + floating filter row
 gb.configure_default_column(
-    filter=True, sortable=True, resizable=True,
-    floatingFilter=True, floatingFilterComponentParams={"suppressFilterButton": True},
+    sortable=True, resizable=True,
+    filter="agTextColumnFilter",
+    floatingFilter=False,   # we have the search input above; keep grid clean
 )
-gb.configure_column("Order",       min_width=260, flex=3, pinned="left")
-gb.configure_column("Type",        min_width=140, flex=2)
-gb.configure_column("Bucket",      min_width=180, flex=2)
+
+gb.configure_column("Order",       min_width=300, flex=4)
+gb.configure_column("Type",        min_width=150, flex=2)
+gb.configure_column("Bucket",      min_width=190, flex=2)
 gb.configure_column(
-    "Revenue", min_width=110, flex=1,
-    type=["numericColumn", "numberColumnFilter"],
-    valueFormatter="'$' + Number(value).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})",
+    "Revenue", min_width=115, flex=1,
+    filter="agNumberColumnFilter",
+    type=["numericColumn"],
+    valueFormatter="'$' + Number(value).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})",
 )
 gb.configure_column(
     "Impressions", min_width=120, flex=1,
-    type=["numericColumn", "numberColumnFilter"],
+    filter="agNumberColumnFilter",
+    type=["numericColumn"],
     valueFormatter="Number(value).toLocaleString('en-US')",
 )
-gb.configure_column("Status", min_width=130, flex=1, filter=False, floatingFilter=False)
+gb.configure_column("Status", min_width=130, flex=1, filter=False, sortable=False)
 gb.configure_grid_options(
-    rowHeight=36, headerHeight=40,
+    rowHeight=38,
+    headerHeight=42,
     suppressMovableColumns=True,
     animateRows=True,
+    tooltipShowDelay=300,
 )
 grid_opts = gb.build()
 
+ag_theme = "alpine-dark" if dm else "alpine"
+
 response = AgGrid(
-    grid_df,
+    filtered_grid,
     gridOptions=grid_opts,
     update_mode=GridUpdateMode.NO_UPDATE,
     data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
-    height=430,
-    theme="streamlit",
+    height=420,
+    theme=ag_theme,
     fit_columns_on_grid_load=True,
     allow_unsafe_jscode=True,
     key="orders_grid",
 )
 
-# ── Handle Save (response is now defined) ─────────────────────────────────────
+# ── Handle Save ───────────────────────────────────────────────────────────────
 
 if save_clicked:
     sel_raw = response.get("selected_rows") or []
@@ -596,24 +833,21 @@ if save_clicked:
 # ── Active changes ─────────────────────────────────────────────────────────────
 
 if st.session_state.excl_set or st.session_state.reassignments:
-    st.markdown("**Active changes** — click Undo to revert individual items:")
+    st.markdown(f"<p style='color:{MUTED};font-size:0.85rem;margin-top:0.8rem'><strong>Active changes</strong> — click Undo to revert:</p>", unsafe_allow_html=True)
 
-    undo_excl = []
+    undo_excl, undo_rc = [], []
     for o in st.session_state.excl_set:
         c1, c2 = st.columns([9, 1])
-        c1.markdown(f"🚫 **{o}** — excluded from analysis")
-        if c2.button("Undo", key=f"undo_e_{o}"):
-            undo_excl.append(o)
+        c1.markdown(f"🚫 **{o}** — excluded")
+        if c2.button("Undo", key=f"undo_e_{o}"): undo_excl.append(o)
 
-    undo_rc = []
     for o, new_t in list(st.session_state.reassignments.items()):
         orig = order_type_map.get(o, "?")
         c1, c2 = st.columns([9, 1])
         c1.markdown(f"🔄 **{o}** — {orig} → **{new_t}**")
-        if c2.button("Undo", key=f"undo_r_{o}"):
-            undo_rc.append(o)
+        if c2.button("Undo", key=f"undo_r_{o}"): undo_rc.append(o)
 
-    if st.button("🗑 Clear all changes", key="clear_all_changes"):
+    if st.button("🗑 Clear all changes", key="clear_all"):
         st.session_state.excl_set = []
         st.session_state.reassignments = {}
         st.rerun()
@@ -622,8 +856,7 @@ if st.session_state.excl_set or st.session_state.reassignments:
         st.session_state.excl_set = [o for o in st.session_state.excl_set if o not in undo_excl]
         st.rerun()
     if undo_rc:
-        for o in undo_rc:
-            del st.session_state.reassignments[o]
+        for o in undo_rc: del st.session_state.reassignments[o]
         st.rerun()
 
 # ── APPLY CHANGES TO GAM ──────────────────────────────────────────────────────
