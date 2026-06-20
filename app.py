@@ -77,7 +77,9 @@ html::before {{
 }}
 
 /* ── APP BACKGROUND ───────────────────────────────────────────────────────── */
-html, body {{ background: {BG}; }}
+/* body must be transparent — white body background would cover html::before  */
+html {{ background: {BG}; }}
+body {{ background: transparent; }}
 /* Transparent so html::before neon shows through */
 .stApp,
 [data-testid="stAppViewContainer"],
