@@ -568,7 +568,8 @@ _ss_defaults = {
     "excl_set":       [],
     "reassignments":  {},
     "last_save_msg":  "",
-    "grid_version":   0,      # increments on each Save → forces grid remount so Status updates
+    "grid_version":   0,   # increments on each Save → grid remounts so Status column refreshes
+    "_order_sel":     [],  # last known selection from SELECTION_CHANGED rerun
 }
 for k, v in _ss_defaults.items():
     if k not in st.session_state:
@@ -903,10 +904,14 @@ grid_opts = gb.build()
 
 ag_key = f"orders_grid_{st.session_state.grid_version}"
 
+# SELECTION_CHANGED fires a Python rerun the moment the user checks/unchecks
+# a row, so we capture selection into session state immediately.
+# On the Save-button rerun the response may be empty (grid re-renders first),
+# so we fall back to the last stored selection from _order_sel.
 response = AgGrid(
     grid_df,
     gridOptions=grid_opts,
-    update_mode=GridUpdateMode.NO_UPDATE,
+    update_mode=GridUpdateMode.SELECTION_CHANGED,
     data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
     height=460,
     theme="streamlit",
@@ -915,14 +920,23 @@ response = AgGrid(
     key=ag_key,
 )
 
+# Always parse current response selection
+_sel_raw = response.get("selected_rows") or []
+if isinstance(_sel_raw, pd.DataFrame):
+    _current_sel = _sel_raw["Order"].tolist() if not _sel_raw.empty else []
+else:
+    _current_sel = [r["Order"] for r in _sel_raw] if _sel_raw else []
+
+# Persist selection; only overwrite when not the Save rerun (Save rerun may
+# briefly return empty before the grid re-renders with updated Status).
+if not save_clicked:
+    st.session_state._order_sel = _current_sel
+
 # ── Handle Save ───────────────────────────────────────────────────────────────
 
 if save_clicked:
-    sel_raw = response.get("selected_rows") or []
-    if isinstance(sel_raw, pd.DataFrame):
-        sel_orders = sel_raw["Order"].tolist() if not sel_raw.empty else []
-    else:
-        sel_orders = [r["Order"] for r in sel_raw] if sel_raw else []
+    # Prefer live response; fall back to last stored selection
+    sel_orders = _current_sel or st.session_state._order_sel
 
     if sel_orders:
         names = ", ".join(sel_orders[:3]) + (f" +{len(sel_orders)-3} more" if len(sel_orders) > 3 else "")
