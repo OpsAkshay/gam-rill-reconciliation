@@ -5,7 +5,7 @@ import base64
 import streamlit as st
 import pandas as pd
 import numpy as np
-from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode, JsCode
 
 st.set_page_config(
     page_title="GAM × Rill Reconciliation",
@@ -35,10 +35,9 @@ SHADOW      = "rgba(0,0,0,0.35)" if dm else "rgba(0,0,0,0.06)"
 SUCCESS_BG  = "#052e16" if dm else "#f0fdf4"
 SUCCESS_BDR = "#166534" if dm else "#86efac"
 SUCCESS_TXT = "#4ade80" if dm else "#15803d"
-NEON1       = "rgba(96,165,250,0.35)"  if dm else "rgba(59,130,246,0.18)"
-NEON2       = "rgba(167,139,250,0.28)" if dm else "rgba(139,92,246,0.14)"
-NEON3       = "rgba(34,211,238,0.22)"  if dm else "rgba(6,182,212,0.12)"
-NEON_BLUR   = "60" if dm else "80"
+NEON1       = "rgba(96,165,250,0.65)"  if dm else "rgba(59,130,246,0.45)"
+NEON2       = "rgba(167,139,250,0.55)" if dm else "rgba(139,92,246,0.38)"
+NEON3       = "rgba(34,211,238,0.45)"  if dm else "rgba(6,182,212,0.32)"
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
 
@@ -56,6 +55,7 @@ html, body, [class*="css"] {{
 }}
 
 /* ── APP BACKGROUND ───────────────────────────────────────────────────────── */
+html, body {{ background: {BG} !important; }}
 .stApp, [data-testid="stAppViewContainer"], .main {{
     background-color: {BG} !important;
 }}
@@ -65,6 +65,24 @@ html, body, [class*="css"] {{
 }}
 [data-testid="stHeader"] {{ background-color: {BG} !important; }}
 [data-testid="stDecoration"] {{ display: none; }}
+
+/* ── NEON AMBIENT GLOW (body::before sits above stApp via z-index) ────────── */
+body::before {{
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 9999;
+    background:
+        radial-gradient(ellipse 680px 680px at -6% -8%,  {NEON1} 0%, transparent 62%),
+        radial-gradient(ellipse 580px 580px at 108% 36%, {NEON2} 0%, transparent 62%),
+        radial-gradient(ellipse 520px 520px at 42% 108%, {NEON3} 0%, transparent 62%);
+    animation: neonBreathe 10s ease-in-out infinite;
+}}
+@keyframes neonBreathe {{
+    0%,100% {{ opacity: 0.9; }}
+    50%      {{ opacity: 0.45; }}
+}}
 
 /* ── SIDEBAR ──────────────────────────────────────────────────────────────── */
 section[data-testid="stSidebar"] {{
@@ -307,77 +325,10 @@ hr {{ border-color: {BORDER} !important; margin: 1.2rem 0; }}
 /* ── HIDE "Press Enter to apply" STREAMLIT HINT ──────────────────────────── */
 [data-testid="InputInstructions"] {{ display: none !important; }}
 
-/* ── NEON ORB ANIMATIONS ─────────────────────────────────────────────────── */
-@keyframes neonF1 {{
-    0%,100% {{ transform: translate(0,0); }}
-    33%      {{ transform: translate(30px, 25px); }}
-    66%      {{ transform: translate(-12px, 42px); }}
-}}
-@keyframes neonF2 {{
-    0%,100% {{ transform: translate(0,0); }}
-    40%      {{ transform: translate(-24px,-18px); }}
-    75%      {{ transform: translate(20px, 14px); }}
-}}
-@keyframes neonF3 {{
-    0%,100% {{ transform: translate(0,0); }}
-    50%      {{ transform: translate(20px,-28px); }}
-}}
 </style>
 """, unsafe_allow_html=True)
 
-# ── NEON ORBS (injected via st.markdown — no JS, no iframe issues) ────────────
 _neon_grad_end = "#1e3a5f" if dm else "#dbeafe"
-st.markdown(f"""
-<div style="position:fixed;top:-80px;left:-100px;width:620px;height:620px;
-     border-radius:50%;filter:blur(70px);pointer-events:none;z-index:9999;
-     background:radial-gradient(circle,{NEON1} 0%,transparent 70%);
-     animation:neonF1 9s ease-in-out infinite;"></div>
-<div style="position:fixed;top:38%;right:-90px;width:500px;height:500px;
-     border-radius:50%;filter:blur(70px);pointer-events:none;z-index:9999;
-     background:radial-gradient(circle,{NEON2} 0%,transparent 70%);
-     animation:neonF2 11s ease-in-out infinite;"></div>
-<div style="position:fixed;bottom:-50px;left:30%;width:480px;height:480px;
-     border-radius:50%;filter:blur(70px);pointer-events:none;z-index:9999;
-     background:radial-gradient(circle,{NEON3} 0%,transparent 70%);
-     animation:neonF3 13s ease-in-out infinite;"></div>
-""", unsafe_allow_html=True)
-
-# ── AG GRID SEARCH BAR CUSTOM CSS (injected directly into the component) ──────
-# custom_css is passed to the streamlit-aggrid frontend and applied inside the
-# component, bypassing the parent-page CSS isolation entirely.
-_ag_custom_css = {
-    ".ag-header-row-floating-filter": {
-        "height": "72px !important",
-        "background": f"linear-gradient(90deg,{ACCENT_BG} 0%,{_neon_grad_end} 100%) !important",
-        "border-top": f"3px solid {ACCENT} !important",
-    },
-    ".ag-floating-filter-full-body,.ag-floating-filter-full-body-input": {
-        "padding": "10px 16px !important",
-        "display": "flex !important",
-        "align-items": "center !important",
-        "height": "100% !important",
-    },
-    ".ag-floating-filter-full-body .ag-wrapper": {
-        "height": "52px !important",
-        "border": f"2.5px solid {ACCENT} !important",
-        "border-radius": "12px !important",
-        "background": f"{BG} !important",
-        "box-shadow": f"0 2px 20px {ACCENT_RING} !important",
-        "padding-left": "48px !important",
-        "display": "flex !important",
-        "align-items": "center !important",
-    },
-    ".ag-floating-filter-full-body input": {
-        "height": "100% !important",
-        "font-size": "1rem !important",
-        "font-weight": "500 !important",
-        "color": f"{TEXT} !important",
-        "background": "transparent !important",
-        "border": "none !important",
-        "box-shadow": "none !important",
-        "outline": "none !important",
-    },
-}
 
 # ── CONSTANTS ─────────────────────────────────────────────────────────────────
 
@@ -943,6 +894,50 @@ gb.configure_grid_options(
 )
 grid_opts = gb.build()
 
+# JsCode runs INSIDE the AG Grid component iframe — direct DOM access, no
+# iframe boundary to cross. Styles the floating filter row and input element.
+_on_grid_ready = JsCode(f"""
+function(params) {{
+    setTimeout(function() {{
+        var row = document.querySelector('.ag-header-row-floating-filter');
+        if (row) {{
+            row.style.height = '72px';
+            row.style.background = 'linear-gradient(90deg,{ACCENT_BG} 0%,{_neon_grad_end} 100%)';
+            row.style.borderTop = '3px solid {ACCENT}';
+        }}
+        var wrappers = document.querySelectorAll(
+            '.ag-floating-filter-full-body .ag-wrapper,' +
+            '.ag-floating-filter-full-body .ag-input-wrapper,' +
+            '.ag-floating-filter-full-body .ag-text-field-input-wrapper'
+        );
+        wrappers.forEach(function(w) {{
+            w.style.height = '52px';
+            w.style.border = '2.5px solid {ACCENT}';
+            w.style.borderRadius = '12px';
+            w.style.background = '{BG}';
+            w.style.boxShadow = '0 2px 20px {ACCENT_RING}';
+            w.style.paddingLeft = '16px';
+            w.style.display = 'flex';
+            w.style.alignItems = 'center';
+        }});
+        var inputs = document.querySelectorAll('.ag-floating-filter-full-body input');
+        inputs.forEach(function(inp) {{
+            inp.style.height = '100%';
+            inp.style.fontSize = '1rem';
+            inp.style.fontWeight = '500';
+            inp.style.color = '{TEXT}';
+            inp.style.background = 'transparent';
+            inp.style.border = 'none';
+            inp.style.boxShadow = 'none';
+            inp.style.outline = 'none';
+            inp.style.width = '100%';
+            inp.placeholder = 'Type to search orders instantly…';
+        }});
+    }}, 150);
+}}
+""")
+grid_opts["onGridReady"] = _on_grid_ready
+
 ag_key = f"orders_grid_{st.session_state.grid_version}"
 
 # SELECTION_CHANGED fires a Python rerun the moment the user checks/unchecks
@@ -958,7 +953,6 @@ response = AgGrid(
     theme="streamlit",
     fit_columns_on_grid_load=True,
     allow_unsafe_jscode=True,
-    custom_css=_ag_custom_css,
     key=ag_key,
 )
 
