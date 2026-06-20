@@ -3,7 +3,6 @@ import zlib
 import base64
 
 import streamlit as st
-import streamlit.components.v1 as components
 import pandas as pd
 import numpy as np
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
@@ -308,146 +307,77 @@ hr {{ border-color: {BORDER} !important; margin: 1.2rem 0; }}
 /* ── HIDE "Press Enter to apply" STREAMLIT HINT ──────────────────────────── */
 [data-testid="InputInstructions"] {{ display: none !important; }}
 
-/* ── AG GRID ORDER SEARCH BAR (fallback if grid in parent DOM) ───────────── */
-.ag-header-row-floating-filter {{
-    height: 72px !important;
+/* ── NEON ORB ANIMATIONS ─────────────────────────────────────────────────── */
+@keyframes neonF1 {{
+    0%,100% {{ transform: translate(0,0); }}
+    33%      {{ transform: translate(30px, 25px); }}
+    66%      {{ transform: translate(-12px, 42px); }}
 }}
-.ag-floating-filter-full-body input,
-.ag-text-field-input,
-.ag-input-field-input {{
-    height: 52px !important;
-    font-size: 1rem !important;
-    font-weight: 500 !important;
-    border: 2.5px solid {ACCENT} !important;
-    border-radius: 12px !important;
+@keyframes neonF2 {{
+    0%,100% {{ transform: translate(0,0); }}
+    40%      {{ transform: translate(-24px,-18px); }}
+    75%      {{ transform: translate(20px, 14px); }}
+}}
+@keyframes neonF3 {{
+    0%,100% {{ transform: translate(0,0); }}
+    50%      {{ transform: translate(20px,-28px); }}
 }}
 </style>
 """, unsafe_allow_html=True)
 
-# ── NEON PARALLAX + AG GRID SEARCH BAR INJECTION ─────────────────────────────
+# ── NEON ORBS (injected via st.markdown — no JS, no iframe issues) ────────────
 _neon_grad_end = "#1e3a5f" if dm else "#dbeafe"
-_ag_css = (
-    ".ag-header-row-floating-filter{{"
-    "height:72px!important;"
-    "border-top:3px solid {ACCENT}!important;"
-    "background:linear-gradient(90deg,{ACCENT_BG} 0%,{GRAD} 100%)!important;"
-    "}}"
-    ".ag-floating-filter-full-body,.ag-floating-filter-full-body-input{{"
-    "padding:10px 16px!important;display:flex!important;align-items:center!important;height:100%!important;"
-    "}}"
-    ".ag-floating-filter-full-body .ag-wrapper,"
-    ".ag-floating-filter-full-body .ag-input-wrapper,"
-    ".ag-floating-filter-full-body .ag-text-field-input-wrapper{{"
-    "height:52px!important;"
-    "border:2.5px solid {ACCENT}!important;"
-    "border-radius:12px!important;"
-    "background:{BG}!important;"
-    "box-shadow:0 2px 20px {ACCENT_RING}!important;"
-    "padding-left:48px!important;"
-    "background-image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%2360a5fa' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.35-4.35'/%3E%3C/svg%3E\")!important;"
-    "background-repeat:no-repeat!important;background-position:14px center!important;background-size:20px 20px!important;"
-    "display:flex!important;align-items:center!important;"
-    "}}"
-    ".ag-floating-filter-full-body:focus-within .ag-wrapper,"
-    ".ag-floating-filter-full-body:focus-within .ag-input-wrapper{{"
-    "box-shadow:0 0 0 4px {ACCENT_RING},0 2px 20px {ACCENT}!important;"
-    "}}"
-    ".ag-floating-filter-full-body input{{"
-    "height:100%!important;font-size:1rem!important;font-weight:500!important;"
-    "color:{TEXT}!important;background:transparent!important;"
-    "border:none!important;box-shadow:none!important;outline:none!important;"
-    "}}"
-    ".ag-floating-filter-full-body input::placeholder{{"
-    "color:{MUTED}!important;font-size:0.95rem!important;"
-    "}}"
-).format(
-    ACCENT=ACCENT, ACCENT_BG=ACCENT_BG, GRAD=_neon_grad_end,
-    ACCENT_RING=ACCENT_RING, BG=BG, TEXT=TEXT, MUTED=MUTED,
-)
+st.markdown(f"""
+<div style="position:fixed;top:-80px;left:-100px;width:620px;height:620px;
+     border-radius:50%;filter:blur(70px);pointer-events:none;z-index:9999;
+     background:radial-gradient(circle,{NEON1} 0%,transparent 70%);
+     animation:neonF1 9s ease-in-out infinite;"></div>
+<div style="position:fixed;top:38%;right:-90px;width:500px;height:500px;
+     border-radius:50%;filter:blur(70px);pointer-events:none;z-index:9999;
+     background:radial-gradient(circle,{NEON2} 0%,transparent 70%);
+     animation:neonF2 11s ease-in-out infinite;"></div>
+<div style="position:fixed;bottom:-50px;left:30%;width:480px;height:480px;
+     border-radius:50%;filter:blur(70px);pointer-events:none;z-index:9999;
+     background:radial-gradient(circle,{NEON3} 0%,transparent 70%);
+     animation:neonF3 13s ease-in-out infinite;"></div>
+""", unsafe_allow_html=True)
 
-components.html(f"""
-<script>
-(function() {{
-    var doc = window.parent.document;
-
-    // ── clean up previous run ──────────────────────────────────────────────────
-    ['neon-orbs','neon-kf'].forEach(function(id) {{
-        var el = doc.getElementById(id);
-        if (el) el.parentNode.removeChild(el);
-    }});
-
-    // ── NEON PARALLAX ORBS ────────────────────────────────────────────────────
-    // z-index 9999 so they render ON TOP of Streamlit's solid background.
-    // pointer-events:none so they never block clicks.
-    // Low opacity keeps them ambient, not distracting.
-    var orbs = doc.createElement('div');
-    orbs.id = 'neon-orbs';
-    orbs.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:9999;overflow:hidden;';
-
-    [
-        ['{NEON1}', '600px', '-80px',  '-80px' ],
-        ['{NEON2}', '480px', '38%',    'calc(100% - 320px)'],
-        ['{NEON3}', '440px', '65%',    '30%'   ],
-    ].forEach(function(b, i) {{
-        var el = doc.createElement('div');
-        el.dataset.spd = [0.22, -0.17, 0.14][i];
-        el.style.cssText = 'position:absolute;width:'+b[1]+';height:'+b[1]+';top:'+b[2]+';left:'+b[3]
-            + ';border-radius:50%;filter:blur({NEON_BLUR}px)'
-            + ';background:radial-gradient(circle,'+b[0]+' 0%,transparent 70%)'
-            + ';animation:neonP '+(6+i*2.5)+'s ease-in-out infinite'
-            + ';will-change:transform;';
-        orbs.appendChild(el);
-    }});
-    doc.body.appendChild(orbs);
-
-    var kf = doc.createElement('style');
-    kf.id = 'neon-kf';
-    kf.textContent = '@keyframes neonP{{0%,100%{{opacity:1}}50%{{opacity:0.42}}}}';
-    doc.head.appendChild(kf);
-
-    // scroll parallax
-    var mainEl = doc.querySelector('[data-testid="stAppViewContainer"]')
-               || doc.querySelector('.main') || doc.documentElement;
-    var tick = false;
-    mainEl.addEventListener('scroll', function() {{
-        if (!tick) {{
-            requestAnimationFrame(function() {{
-                var sy = mainEl.scrollTop;
-                orbs.querySelectorAll('[data-spd]').forEach(function(el) {{
-                    el.style.transform = 'translateY(' + sy * +el.dataset.spd + 'px)';
-                }});
-                tick = false;
-            }});
-            tick = true;
-        }}
-    }}, {{passive:true}});
-
-    // ── INJECT SEARCH BAR CSS INTO AG GRID IFRAME ─────────────────────────────
-    var agCSS = {repr(_ag_css)};
-
-    function applyAgStyle() {{
-        var frames = doc.querySelectorAll('iframe');
-        var hit = false;
-        frames.forEach(function(f) {{
-            try {{
-                var fd = f.contentDocument || f.contentWindow.document;
-                if (!fd || !fd.querySelector('.ag-theme-streamlit')) return;
-                hit = true;
-                var old = fd.getElementById('ag-search-custom');
-                if (old) old.parentNode.removeChild(old);
-                var s = fd.createElement('style');
-                s.id = 'ag-search-custom';
-                s.textContent = agCSS;
-                (fd.head || fd.documentElement).appendChild(s);
-            }} catch(e) {{}}
-        }});
-        if (!hit) setTimeout(applyAgStyle, 300);
-    }}
-    applyAgStyle();
-
-}})();
-</script>
-""", height=0)
+# ── AG GRID SEARCH BAR CUSTOM CSS (injected directly into the component) ──────
+# custom_css is passed to the streamlit-aggrid frontend and applied inside the
+# component, bypassing the parent-page CSS isolation entirely.
+_ag_custom_css = {
+    ".ag-header-row-floating-filter": {
+        "height": "72px !important",
+        "background": f"linear-gradient(90deg,{ACCENT_BG} 0%,{_neon_grad_end} 100%) !important",
+        "border-top": f"3px solid {ACCENT} !important",
+    },
+    ".ag-floating-filter-full-body,.ag-floating-filter-full-body-input": {
+        "padding": "10px 16px !important",
+        "display": "flex !important",
+        "align-items": "center !important",
+        "height": "100% !important",
+    },
+    ".ag-floating-filter-full-body .ag-wrapper": {
+        "height": "52px !important",
+        "border": f"2.5px solid {ACCENT} !important",
+        "border-radius": "12px !important",
+        "background": f"{BG} !important",
+        "box-shadow": f"0 2px 20px {ACCENT_RING} !important",
+        "padding-left": "48px !important",
+        "display": "flex !important",
+        "align-items": "center !important",
+    },
+    ".ag-floating-filter-full-body input": {
+        "height": "100% !important",
+        "font-size": "1rem !important",
+        "font-weight": "500 !important",
+        "color": f"{TEXT} !important",
+        "background": "transparent !important",
+        "border": "none !important",
+        "box-shadow": "none !important",
+        "outline": "none !important",
+    },
+}
 
 # ── CONSTANTS ─────────────────────────────────────────────────────────────────
 
@@ -1028,6 +958,7 @@ response = AgGrid(
     theme="streamlit",
     fit_columns_on_grid_load=True,
     allow_unsafe_jscode=True,
+    custom_css=_ag_custom_css,
     key=ag_key,
 )
 
