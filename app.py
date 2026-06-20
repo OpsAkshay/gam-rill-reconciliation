@@ -7,7 +7,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 # pyrefly: ignore [missing-import]
-from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode, JsCode
 
 st.set_page_config(
     page_title="GAM × Rill Reconciliation",
@@ -173,24 +173,6 @@ a {{ color: {ACCENT} !important; }}
 }}
 [data-testid="stTextInput"] input::placeholder {{ color: {MUTED} !important; }}
 
-/* ── ORDER SEARCH BAR (big, prominent, full-width) ────────────────────────── */
-.main [data-testid="stTextInput"] input {{
-    height: 3.2rem !important;
-    font-size: 1.05rem !important;
-    font-weight: 500 !important;
-    border: 2.5px solid {ACCENT} !important;
-    border-radius: 14px !important;
-    box-shadow: 0 0 0 4px {ACCENT_RING}, 0 4px 24px {ACCENT_RING} !important;
-    padding-left: 1.2rem !important;
-}}
-.main [data-testid="stTextInput"] input:focus {{
-    box-shadow: 0 0 0 4px {ACCENT}, 0 4px 28px {ACCENT_RING} !important;
-}}
-.main [data-testid="stTextInput"] input::placeholder {{
-    color: {ACCENT} !important;
-    font-weight: 400 !important;
-    opacity: 0.7;
-}}
 
 /* ── SELECT / MULTISELECT ─────────────────────────────────────────────────── */
 [data-testid="stSelectbox"] > div > div,
@@ -860,23 +842,25 @@ with cc:
 if st.session_state.last_save_msg:
     st.success(st.session_state.last_save_msg)
 
-# ── Order search bar ──────────────────────────────────────────────────────────
-
-_search = st.text_input(
-    "",
-    placeholder="🔍  Search orders — type to filter instantly…",
-    key="order_search",
-    label_visibility="collapsed",
-)
-if _search:
-    grid_df = grid_df[grid_df["Order"].str.contains(_search, case=False, na=False)]
-
 # ── AG Grid ───────────────────────────────────────────────────────────────────
 
 gb = GridOptionsBuilder.from_dataframe(grid_df)
 gb.configure_selection("multiple", use_checkbox=True, header_checkbox=True)
-gb.configure_default_column(sortable=True, resizable=True, filter="agTextColumnFilter")
-gb.configure_column("Order",  min_width=300, flex=4)
+gb.configure_default_column(
+    sortable=True, resizable=True,
+    filter="agTextColumnFilter",
+    floatingFilter=False,
+)
+gb.configure_column(
+    "Order", min_width=300, flex=4,
+    filter="agTextColumnFilter",
+    floatingFilter=True,
+    filterParams={
+        "filterOptions": ["contains"],
+        "defaultOption": "contains",
+        "suppressAndOrCondition": True,
+    },
+)
 gb.configure_column("Type",   min_width=150, flex=2)
 gb.configure_column("Bucket", min_width=190, flex=2)
 gb.configure_column(
@@ -895,11 +879,58 @@ gb.configure_column("Status", min_width=130, flex=1, filter=False, sortable=Fals
 gb.configure_grid_options(
     rowHeight=38,
     headerHeight=42,
+    floatingFiltersHeight=56,
     suppressMovableColumns=True,
     animateRows=True,
     tooltipShowDelay=300,
 )
 grid_opts = gb.build()
+
+_neon_grad_end = "#1e3a5f" if dm else "#dbeafe"
+_style_filter = JsCode(f"""
+function(params) {{
+    var attempts = 0;
+    function apply() {{
+        var row = document.querySelector('.ag-header-row-floating-filter');
+        var wrappers = document.querySelectorAll('.ag-text-field-input-wrapper');
+        var inputs = document.querySelectorAll('.ag-text-field-input');
+        if ((!row || wrappers.length === 0) && attempts < 40) {{
+            attempts++;
+            setTimeout(apply, 100);
+            return;
+        }}
+        if (row) {{
+            row.style.height = '56px';
+            row.style.background = 'linear-gradient(90deg,{ACCENT_BG} 0%,{_neon_grad_end} 100%)';
+            row.style.borderTop = '2px solid {ACCENT}';
+            row.style.borderBottom = '2px solid {ACCENT}';
+        }}
+        wrappers.forEach(function(w) {{
+            w.style.height = '40px';
+            w.style.border = '2px solid {ACCENT}';
+            w.style.borderRadius = '10px';
+            w.style.background = '{BG}';
+            w.style.boxShadow = '0 0 12px {ACCENT_RING}';
+            w.style.display = 'flex';
+            w.style.alignItems = 'center';
+            w.style.paddingLeft = '10px';
+        }});
+        inputs.forEach(function(inp) {{
+            inp.style.fontSize = '0.95rem';
+            inp.style.fontWeight = '500';
+            inp.style.color = '{TEXT}';
+            inp.style.background = 'transparent';
+            inp.style.border = 'none';
+            inp.style.outline = 'none';
+            inp.style.width = '100%';
+            inp.placeholder = '🔍 type to filter…';
+        }});
+    }}
+    setTimeout(apply, 100);
+}}
+""")
+grid_opts["onGridReady"] = _style_filter
+grid_opts["onFirstDataRendered"] = _style_filter
 
 ag_key = f"orders_grid_{st.session_state.grid_version}"
 
