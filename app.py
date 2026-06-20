@@ -156,11 +156,24 @@ a {{ color: {ACCENT} !important; }}
 /* ── FILE UPLOADER ────────────────────────────────────────────────────────── */
 [data-testid="stFileUploader"] {{
     background: {SURFACE} !important;
-    border: 2px dashed {BORDER} !important;
     border-radius: 10px;
-    padding: 0.5rem;
+    padding: 0.3rem;
 }}
-[data-testid="stFileUploader"] * {{ color: {TEXT} !important; }}
+[data-testid="stFileUploaderDropzone"] {{
+    background: {SURFACE2} !important;
+    border: 2px dashed {BORDER} !important;
+    border-radius: 8px !important;
+}}
+[data-testid="stFileUploaderDropzone"] * {{ color: {TEXT} !important; }}
+[data-testid="stFileUploaderDropzone"] button {{
+    background: {SURFACE} !important;
+    border: 1px solid {BORDER} !important;
+    color: {TEXT} !important;
+    border-radius: 6px;
+}}
+[data-testid="stFileUploaderDropzone"] svg {{ fill: {MUTED} !important; }}
+[data-testid="stFileUploaderDropzone"] small,
+[data-testid="stFileUploaderDropzone"] span {{ color: {MUTED} !important; }}
 
 /* ── EXPANDERS ────────────────────────────────────────────────────────────── */
 [data-testid="stExpander"] {{
@@ -286,6 +299,28 @@ hr {{ border-color: {BORDER} !important; margin: 1.2rem 0; }}
 .ag-theme-streamlit .ag-cell {{ color: {TEXT} !important; }}
 .ag-theme-streamlit .ag-paging-panel {{ color: {MUTED} !important; background: {SURFACE} !important; }}
 .ag-theme-streamlit .ag-root-wrapper {{ border-radius: 10px; overflow: hidden; border: 1px solid {BORDER} !important; }}
+
+/* ── AG GRID FLOATING FILTER (real-time Order search) ─────────────────────── */
+.ag-theme-streamlit .ag-header-row-floating-filter {{
+    background: {ACCENT_BG} !important;
+    border-top: 1px solid {ACCENT_RING} !important;
+}}
+.ag-theme-streamlit .ag-floating-filter-input {{
+    background: {BG} !important;
+    color: {TEXT} !important;
+    border: 1.5px solid {BORDER} !important;
+    border-radius: 6px !important;
+    font-size: 0.88rem !important;
+    padding: 0 0.5rem !important;
+    height: 28px !important;
+}}
+.ag-theme-streamlit .ag-floating-filter-input:focus-within {{
+    border-color: {ACCENT} !important;
+    box-shadow: 0 0 0 2px {ACCENT_RING} !important;
+}}
+.ag-theme-streamlit .ag-floating-filter-input input::placeholder {{
+    color: {MUTED} !important;
+}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -518,6 +553,7 @@ _ss_defaults = {
     "link_generated": False,
     "excl_set":       [],
     "reassignments":  {},
+    "last_save_msg":  "",
 }
 for k, v in _ss_defaults.items():
     if k not in st.session_state:
@@ -753,49 +789,35 @@ with cb:
 with cc:
     save_clicked = st.button("💾 Save", type="primary", key="ord_save")
 
-# ── Search input (filters before AG Grid — largest, most visible) ─────────────
+# ── Flash message from previous Save ─────────────────────────────────────────
 
-sc1, sc2 = st.columns([5, 1])
-with sc1:
-    order_search = st.text_input(
-        "search",
-        placeholder="🔍  Search by order name, type, or bucket…",
-        key="order_search",
-        label_visibility="collapsed",
-    )
-with sc2:
-    pass  # spacer
+if st.session_state.last_save_msg:
+    st.success(st.session_state.last_save_msg)
+    st.session_state.last_save_msg = ""
 
-if order_search:
-    mask = (
-        grid_df["Order"].str.contains(order_search, case=False, na=False)
-        | grid_df["Type"].str.contains(order_search, case=False, na=False)
-        | grid_df["Bucket"].str.contains(order_search, case=False, na=False)
-    )
-    filtered_grid = grid_df[mask].reset_index(drop=True)
-    st.caption(
-        f"**{len(filtered_grid)}** of {len(grid_df)} orders match '{order_search}' "
-        f"— use the header ☑ checkbox to select all results"
-    )
-else:
-    filtered_grid = grid_df
-    st.caption(f"{len(grid_df)} orders total — use the header ☑ checkbox to select all")
+# ── AG Grid (floating filter on Order column = real-time, no Enter needed) ────
 
-# ── AG Grid ───────────────────────────────────────────────────────────────────
+st.caption(
+    f"🔍 **Type in the Order search row** (below the column header) to filter instantly  ·  "
+    f"Header ☑ checkbox selects all visible rows  ·  {len(grid_df)} orders total"
+)
 
-gb = GridOptionsBuilder.from_dataframe(filtered_grid)
+gb = GridOptionsBuilder.from_dataframe(grid_df)
 gb.configure_selection("multiple", use_checkbox=True, header_checkbox=True)
-
-# Default: all columns get text filter + floating filter row
 gb.configure_default_column(
     sortable=True, resizable=True,
     filter="agTextColumnFilter",
-    floatingFilter=False,   # we have the search input above; keep grid clean
+    floatingFilter=False,
 )
-
-gb.configure_column("Order",       min_width=300, flex=4)
-gb.configure_column("Type",        min_width=150, flex=2)
-gb.configure_column("Bucket",      min_width=190, flex=2)
+# Order column gets the real-time floating filter search box
+gb.configure_column(
+    "Order", min_width=300, flex=4,
+    filter="agTextColumnFilter",
+    floatingFilter=True,
+    filterParams={"filterOptions": ["contains"], "defaultOption": "contains", "suppressAndOrCondition": True},
+)
+gb.configure_column("Type",   min_width=150, flex=2)
+gb.configure_column("Bucket", min_width=190, flex=2)
 gb.configure_column(
     "Revenue", min_width=115, flex=1,
     filter="agNumberColumnFilter",
@@ -812,26 +834,23 @@ gb.configure_column("Status", min_width=130, flex=1, filter=False, sortable=Fals
 gb.configure_grid_options(
     rowHeight=38,
     headerHeight=42,
+    floatingFiltersHeight=36,
     suppressMovableColumns=True,
     animateRows=True,
     tooltipShowDelay=300,
 )
 grid_opts = gb.build()
 
-# Key changes whenever search term changes — forces AG Grid to re-render with filtered data.
-# Theme is always "streamlit"; dark styling is handled via CSS variable overrides above.
-ag_key = f"orders_grid_{abs(hash(order_search or ''))}"
-
 response = AgGrid(
-    filtered_grid,
+    grid_df,
     gridOptions=grid_opts,
     update_mode=GridUpdateMode.NO_UPDATE,
     data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
-    height=420,
+    height=450,
     theme="streamlit",
     fit_columns_on_grid_load=True,
     allow_unsafe_jscode=True,
-    key=ag_key,
+    key="orders_grid",
 )
 
 # ── Handle Save ───────────────────────────────────────────────────────────────
@@ -844,43 +863,59 @@ if save_clicked:
         sel_orders = [r["Order"] for r in sel_raw] if sel_raw else []
 
     if sel_orders:
+        names = ", ".join(sel_orders[:3]) + (f" +{len(sel_orders)-3} more" if len(sel_orders) > 3 else "")
         if action_choice == "Exclude":
             st.session_state.excl_set = list(set(st.session_state.excl_set + sel_orders))
+            st.session_state.last_save_msg = f"🚫 Excluded {len(sel_orders)} order(s): {names}"
         else:
             for o in sel_orders:
                 st.session_state.reassignments[o] = reclass_to
+            st.session_state.last_save_msg = f"🔄 Reclassified {len(sel_orders)} order(s) → {reclass_to}: {names}"
         st.rerun()
     else:
-        st.warning("No orders checked — tick the checkboxes in the table first.")
+        st.warning("No orders checked — tick the checkboxes in the Order column's filter row to select rows first.")
 
-# ── Active changes ─────────────────────────────────────────────────────────────
+# ── Active changes (collapsible QA panel) ─────────────────────────────────────
 
-if st.session_state.excl_set or st.session_state.reassignments:
-    st.markdown(f"<p style='color:{MUTED};font-size:0.85rem;margin-top:0.8rem'><strong>Active changes</strong> — click Undo to revert:</p>", unsafe_allow_html=True)
+n_excl = len(st.session_state.excl_set)
+n_rc   = len(st.session_state.reassignments)
+total_changes = n_excl + n_rc
 
-    undo_excl, undo_rc = [], []
-    for o in st.session_state.excl_set:
-        c1, c2 = st.columns([9, 1])
-        c1.markdown(f"🚫 **{o}** — excluded")
-        if c2.button("Undo", key=f"undo_e_{o}"): undo_excl.append(o)
+if total_changes > 0:
+    label = f"📋 Active changes — {total_changes} modification{'s' if total_changes != 1 else ''}"
+    if n_excl: label += f"  ·  {n_excl} excluded"
+    if n_rc:   label += f"  ·  {n_rc} reclassified"
 
-    for o, new_t in list(st.session_state.reassignments.items()):
-        orig = order_type_map.get(o, "?")
-        c1, c2 = st.columns([9, 1])
-        c1.markdown(f"🔄 **{o}** — {orig} → **{new_t}**")
-        if c2.button("Undo", key=f"undo_r_{o}"): undo_rc.append(o)
+    with st.expander(label, expanded=True):
+        undo_excl, undo_rc = [], []
 
-    if st.button("🗑 Clear all changes", key="clear_all"):
-        st.session_state.excl_set = []
-        st.session_state.reassignments = {}
-        st.rerun()
+        if st.session_state.excl_set:
+            st.markdown(f"**Exclusions** — removed from all comparisons")
+            for o in st.session_state.excl_set:
+                c1, c2 = st.columns([9, 1])
+                c1.markdown(f"🚫 {o}")
+                if c2.button("Undo", key=f"undo_e_{o}"): undo_excl.append(o)
 
-    if undo_excl:
-        st.session_state.excl_set = [o for o in st.session_state.excl_set if o not in undo_excl]
-        st.rerun()
-    if undo_rc:
-        for o in undo_rc: del st.session_state.reassignments[o]
-        st.rerun()
+        if st.session_state.reassignments:
+            st.markdown(f"**Reclassifications** — moved to a different bucket")
+            for o, new_t in list(st.session_state.reassignments.items()):
+                orig = order_type_map.get(o, "?")
+                c1, c2 = st.columns([9, 1])
+                c1.markdown(f"🔄 {o} — {orig} → **{new_t}**")
+                if c2.button("Undo", key=f"undo_r_{o}"): undo_rc.append(o)
+
+        st.divider()
+        if st.button("🗑 Clear all changes", key="clear_all"):
+            st.session_state.excl_set = []
+            st.session_state.reassignments = {}
+            st.rerun()
+
+        if undo_excl:
+            st.session_state.excl_set = [o for o in st.session_state.excl_set if o not in undo_excl]
+            st.rerun()
+        if undo_rc:
+            for o in undo_rc: del st.session_state.reassignments[o]
+            st.rerun()
 
 # ── APPLY CHANGES TO GAM ──────────────────────────────────────────────────────
 
