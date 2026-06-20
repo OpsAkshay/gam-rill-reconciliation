@@ -7,7 +7,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 # pyrefly: ignore [missing-import]
-from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode, JsCode
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 
 st.set_page_config(
     page_title="GAM × Rill Reconciliation",
@@ -158,7 +158,7 @@ a {{ color: {ACCENT} !important; }}
     background: {ACCENT_BG} !important;
 }}
 
-/* ── INPUTS ───────────────────────────────────────────────────────────────── */
+/* ── INPUTS (general) ─────────────────────────────────────────────────────── */
 [data-testid="stTextInput"] input {{
     background: {SURFACE} !important;
     color: {TEXT} !important;
@@ -172,6 +172,25 @@ a {{ color: {ACCENT} !important; }}
     box-shadow: 0 0 0 3px {ACCENT_RING} !important;
 }}
 [data-testid="stTextInput"] input::placeholder {{ color: {MUTED} !important; }}
+
+/* ── ORDER SEARCH BAR (big, prominent, full-width) ────────────────────────── */
+.main [data-testid="stTextInput"] input {{
+    height: 3.2rem !important;
+    font-size: 1.05rem !important;
+    font-weight: 500 !important;
+    border: 2.5px solid {ACCENT} !important;
+    border-radius: 14px !important;
+    box-shadow: 0 0 0 4px {ACCENT_RING}, 0 4px 24px {ACCENT_RING} !important;
+    padding-left: 1.2rem !important;
+}}
+.main [data-testid="stTextInput"] input:focus {{
+    box-shadow: 0 0 0 4px {ACCENT}, 0 4px 28px {ACCENT_RING} !important;
+}}
+.main [data-testid="stTextInput"] input::placeholder {{
+    color: {ACCENT} !important;
+    font-weight: 400 !important;
+    opacity: 0.7;
+}}
 
 /* ── SELECT / MULTISELECT ─────────────────────────────────────────────────── */
 [data-testid="stSelectbox"] > div > div,
@@ -841,43 +860,23 @@ with cc:
 if st.session_state.last_save_msg:
     st.success(st.session_state.last_save_msg)
 
-# ── Instruction banner for real-time search ───────────────────────────────────
+# ── Order search bar ──────────────────────────────────────────────────────────
 
-st.markdown(
-    f"<div style='background:{ACCENT_BG};border:1px solid {ACCENT_RING};"
-    f"border-radius:8px;padding:0.55rem 1rem;margin:0.6rem 0 0.4rem 0;"
-    f"font-size:0.88rem;color:{ACCENT}'>"
-    f"🔍 <strong>Type directly in the search row inside the table</strong> "
-    f"(the blue row below the column headers) — results filter instantly as you type, "
-    f"no Enter needed.&nbsp; Header ☑ selects all visible rows."
-    f"</div>",
-    unsafe_allow_html=True,
+_search = st.text_input(
+    "",
+    placeholder="🔍  Search orders — type to filter instantly…",
+    key="order_search",
+    label_visibility="collapsed",
 )
+if _search:
+    grid_df = grid_df[grid_df["Order"].str.contains(_search, case=False, na=False)]
 
 # ── AG Grid ───────────────────────────────────────────────────────────────────
-# Floating filter on Order column = real-time client-side JS filter, no Enter.
-# Key only includes grid_version (no search term — filter is handled client-side).
-# On Save: grid_version increments → grid remounts → Status column refreshes.
-# Between user typing/selecting and clicking Save, key is STABLE so the
-# component keeps its internal floating filter state and selection.
 
 gb = GridOptionsBuilder.from_dataframe(grid_df)
 gb.configure_selection("multiple", use_checkbox=True, header_checkbox=True)
-gb.configure_default_column(
-    sortable=True, resizable=True,
-    filter="agTextColumnFilter",
-    floatingFilter=False,
-)
-gb.configure_column(
-    "Order", headerName="Order  ·  🔍 type to search", min_width=300, flex=4,
-    filter="agTextColumnFilter",
-    floatingFilter=True,
-    filterParams={
-        "filterOptions": ["contains"],
-        "defaultOption": "contains",
-        "suppressAndOrCondition": True,
-    },
-)
+gb.configure_default_column(sortable=True, resizable=True, filter="agTextColumnFilter")
+gb.configure_column("Order",  min_width=300, flex=4)
 gb.configure_column("Type",   min_width=150, flex=2)
 gb.configure_column("Bucket", min_width=190, flex=2)
 gb.configure_column(
@@ -896,58 +895,11 @@ gb.configure_column("Status", min_width=130, flex=1, filter=False, sortable=Fals
 gb.configure_grid_options(
     rowHeight=38,
     headerHeight=42,
-    floatingFiltersHeight=72,
     suppressMovableColumns=True,
     animateRows=True,
     tooltipShowDelay=300,
 )
 grid_opts = gb.build()
-
-# JsCode runs INSIDE the AG Grid component iframe — direct DOM access, no
-# iframe boundary to cross. Styles the floating filter row and input element.
-_on_grid_ready = JsCode(f"""
-function(params) {{
-    var attempts = 0;
-    function applyStyles() {{
-        var row = document.querySelector('.ag-header-row-floating-filter');
-        var wrappers = document.querySelectorAll('.ag-text-field-input-wrapper');
-        var inputs = document.querySelectorAll('.ag-text-field-input');
-        if ((!row || wrappers.length === 0) && attempts < 30) {{
-            attempts++;
-            setTimeout(applyStyles, 100);
-            return;
-        }}
-        if (row) {{
-            row.style.height = '72px';
-            row.style.background = 'linear-gradient(90deg,{ACCENT_BG} 0%,{_neon_grad_end} 100%)';
-            row.style.borderTop = '3px solid {ACCENT}';
-        }}
-        wrappers.forEach(function(w) {{
-            w.style.height = '52px';
-            w.style.border = '2.5px solid {ACCENT}';
-            w.style.borderRadius = '12px';
-            w.style.background = '{BG}';
-            w.style.boxShadow = '0 2px 20px {ACCENT_RING}';
-            w.style.paddingLeft = '16px';
-            w.style.display = 'flex';
-            w.style.alignItems = 'center';
-        }});
-        inputs.forEach(function(inp) {{
-            inp.style.fontSize = '1rem';
-            inp.style.fontWeight = '500';
-            inp.style.color = '{TEXT}';
-            inp.style.background = 'transparent';
-            inp.style.border = 'none';
-            inp.style.outline = 'none';
-            inp.style.width = '100%';
-            inp.placeholder = '🔍  Type to search orders…';
-        }});
-    }}
-    setTimeout(applyStyles, 80);
-}}
-""")
-grid_opts["onGridReady"] = _on_grid_ready
-grid_opts["onFirstDataRendered"] = _on_grid_ready
 
 ag_key = f"orders_grid_{st.session_state.grid_version}"
 
