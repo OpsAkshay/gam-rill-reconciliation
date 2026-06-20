@@ -36,10 +36,10 @@ SHADOW      = "rgba(0,0,0,0.35)" if dm else "rgba(0,0,0,0.06)"
 SUCCESS_BG  = "#052e16" if dm else "#f0fdf4"
 SUCCESS_BDR = "#166534" if dm else "#86efac"
 SUCCESS_TXT = "#4ade80" if dm else "#15803d"
-NEON1       = "rgba(96,165,250,0.28)"  if dm else "rgba(59,130,246,0.10)"
-NEON2       = "rgba(167,139,250,0.22)" if dm else "rgba(139,92,246,0.07)"
-NEON3       = "rgba(34,211,238,0.16)"  if dm else "rgba(6,182,212,0.06)"
-NEON_BLUR   = "55" if dm else "75"
+NEON1       = "rgba(96,165,250,0.35)"  if dm else "rgba(59,130,246,0.18)"
+NEON2       = "rgba(167,139,250,0.28)" if dm else "rgba(139,92,246,0.14)"
+NEON3       = "rgba(34,211,238,0.22)"  if dm else "rgba(6,182,212,0.12)"
+NEON_BLUR   = "60" if dm else "80"
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
 
@@ -308,116 +308,143 @@ hr {{ border-color: {BORDER} !important; margin: 1.2rem 0; }}
 /* ── HIDE "Press Enter to apply" STREAMLIT HINT ──────────────────────────── */
 [data-testid="InputInstructions"] {{ display: none !important; }}
 
-/* ── AG GRID ORDER SEARCH BAR (floating filter) ──────────────────────────── */
-.ag-theme-streamlit .ag-header-row-floating-filter {{
-    background: linear-gradient(90deg, {ACCENT_BG} 0%, {'#1e3a5f' if dm else '#dbeafe'} 100%) !important;
-    border-top: 3px solid {ACCENT} !important;
-    border-bottom: 1px solid {ACCENT_RING} !important;
+/* ── AG GRID ORDER SEARCH BAR (fallback if grid in parent DOM) ───────────── */
+.ag-header-row-floating-filter {{
     height: 72px !important;
 }}
-.ag-theme-streamlit .ag-floating-filter-full-body {{
-    display: flex !important;
-    align-items: center !important;
-    height: 100% !important;
-    padding: 10px 12px !important;
-}}
-.ag-theme-streamlit .ag-floating-filter-input {{
-    background: {BG} !important;
-    color: {TEXT} !important;
-    border: 2px solid {ACCENT} !important;
-    border-radius: 10px !important;
+.ag-floating-filter-full-body input,
+.ag-text-field-input,
+.ag-input-field-input {{
+    height: 52px !important;
     font-size: 1rem !important;
     font-weight: 500 !important;
-    height: 48px !important;
-    padding: 0 14px 0 42px !important;
-    width: 100% !important;
-    box-shadow: 0 2px 12px {ACCENT_RING} !important;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%2360a5fa' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.35-4.35'/%3E%3C/svg%3E") !important;
-    background-repeat: no-repeat !important;
-    background-position: 12px center !important;
-    background-size: 18px 18px !important;
-}}
-.ag-theme-streamlit .ag-floating-filter-input:focus-within,
-.ag-theme-streamlit .ag-floating-filter-input:focus {{
-    border-color: {ACCENT} !important;
-    box-shadow: 0 0 0 4px {ACCENT_RING}, 0 2px 16px {ACCENT_RING} !important;
-    outline: none !important;
-}}
-.ag-theme-streamlit .ag-floating-filter-input input {{
-    background: transparent !important;
-    color: {TEXT} !important;
-    font-size: 1rem !important;
-    font-weight: 500 !important;
-    padding: 0 !important;
-    height: 100% !important;
-    border: none !important;
-    outline: none !important;
-    box-shadow: none !important;
-}}
-.ag-theme-streamlit .ag-floating-filter-input input::placeholder {{
-    color: {MUTED} !important;
-    font-size: 0.95rem !important;
-    font-weight: 400 !important;
+    border: 2.5px solid {ACCENT} !important;
+    border-radius: 12px !important;
 }}
 </style>
 """, unsafe_allow_html=True)
 
-# ── NEON PARALLAX ─────────────────────────────────────────────────────────────
+# ── NEON PARALLAX + AG GRID SEARCH BAR INJECTION ─────────────────────────────
+_neon_grad_end = "#1e3a5f" if dm else "#dbeafe"
+_ag_css = (
+    ".ag-header-row-floating-filter{{"
+    "height:72px!important;"
+    "border-top:3px solid {ACCENT}!important;"
+    "background:linear-gradient(90deg,{ACCENT_BG} 0%,{GRAD} 100%)!important;"
+    "}}"
+    ".ag-floating-filter-full-body,.ag-floating-filter-full-body-input{{"
+    "padding:10px 16px!important;display:flex!important;align-items:center!important;height:100%!important;"
+    "}}"
+    ".ag-floating-filter-full-body .ag-wrapper,"
+    ".ag-floating-filter-full-body .ag-input-wrapper,"
+    ".ag-floating-filter-full-body .ag-text-field-input-wrapper{{"
+    "height:52px!important;"
+    "border:2.5px solid {ACCENT}!important;"
+    "border-radius:12px!important;"
+    "background:{BG}!important;"
+    "box-shadow:0 2px 20px {ACCENT_RING}!important;"
+    "padding-left:48px!important;"
+    "background-image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%2360a5fa' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.35-4.35'/%3E%3C/svg%3E\")!important;"
+    "background-repeat:no-repeat!important;background-position:14px center!important;background-size:20px 20px!important;"
+    "display:flex!important;align-items:center!important;"
+    "}}"
+    ".ag-floating-filter-full-body:focus-within .ag-wrapper,"
+    ".ag-floating-filter-full-body:focus-within .ag-input-wrapper{{"
+    "box-shadow:0 0 0 4px {ACCENT_RING},0 2px 20px {ACCENT}!important;"
+    "}}"
+    ".ag-floating-filter-full-body input{{"
+    "height:100%!important;font-size:1rem!important;font-weight:500!important;"
+    "color:{TEXT}!important;background:transparent!important;"
+    "border:none!important;box-shadow:none!important;outline:none!important;"
+    "}}"
+    ".ag-floating-filter-full-body input::placeholder{{"
+    "color:{MUTED}!important;font-size:0.95rem!important;"
+    "}}"
+).format(
+    ACCENT=ACCENT, ACCENT_BG=ACCENT_BG, GRAD=_neon_grad_end,
+    ACCENT_RING=ACCENT_RING, BG=BG, TEXT=TEXT, MUTED=MUTED,
+)
+
 components.html(f"""
 <script>
 (function() {{
     var doc = window.parent.document;
-    var existing = doc.getElementById('neon-container');
-    if (existing) {{
-        existing.remove();
-        var oldStyle = doc.getElementById('neon-style');
-        if (oldStyle) oldStyle.remove();
-    }}
-    var container = doc.createElement('div');
-    container.id = 'neon-container';
-    container.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;pointer-events:none;z-index:0;overflow:hidden;';
-    var blobs = [
-        {{ color:'{NEON1}', size:'560px', top:'-60px',  left:'-80px',  speed:0.22 }},
-        {{ color:'{NEON2}', size:'440px', top:'40%',    right:'-60px', speed:-0.17 }},
-        {{ color:'{NEON3}', size:'400px', bottom:'-30px', left:'38%',  speed:0.14 }},
-    ];
-    blobs.forEach(function(b, i) {{
-        var el = doc.createElement('div');
-        el.className = 'neon-blob';
-        el.dataset.speed = b.speed;
-        var pos = '';
-        if (b.top    !== undefined) pos += 'top:'    + b.top    + ';';
-        if (b.bottom !== undefined) pos += 'bottom:' + b.bottom + ';';
-        if (b.left   !== undefined) pos += 'left:'   + b.left   + ';';
-        if (b.right  !== undefined) pos += 'right:'  + b.right  + ';';
-        el.style.cssText = 'position:absolute;width:' + b.size + ';height:' + b.size
-            + ';border-radius:50%;filter:blur({NEON_BLUR}px);'
-            + 'background:radial-gradient(circle,' + b.color + ' 0%,transparent 70%);'
-            + 'animation:neon-pulse ' + (6 + i * 2.5) + 's ease-in-out infinite;'
-            + 'will-change:transform;' + pos;
-        container.appendChild(el);
+
+    // ── clean up previous run ──────────────────────────────────────────────────
+    ['neon-orbs','neon-kf'].forEach(function(id) {{
+        var el = doc.getElementById(id);
+        if (el) el.parentNode.removeChild(el);
     }});
-    doc.body.appendChild(container);
-    var style = doc.createElement('style');
-    style.id = 'neon-style';
-    style.textContent = '@keyframes neon-pulse {{0%,100%{{opacity:1}}50%{{opacity:0.55}}}}';
-    doc.head.appendChild(style);
-    var mainEl = doc.querySelector('.main')
-        || doc.querySelector('[data-testid="stAppViewContainer"]')
-        || doc.documentElement;
-    var ticking = false;
+
+    // ── NEON PARALLAX ORBS ────────────────────────────────────────────────────
+    // z-index 9999 so they render ON TOP of Streamlit's solid background.
+    // pointer-events:none so they never block clicks.
+    // Low opacity keeps them ambient, not distracting.
+    var orbs = doc.createElement('div');
+    orbs.id = 'neon-orbs';
+    orbs.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:9999;overflow:hidden;';
+
+    [
+        ['{NEON1}', '600px', '-80px',  '-80px' ],
+        ['{NEON2}', '480px', '38%',    'calc(100% - 320px)'],
+        ['{NEON3}', '440px', '65%',    '30%'   ],
+    ].forEach(function(b, i) {{
+        var el = doc.createElement('div');
+        el.dataset.spd = [0.22, -0.17, 0.14][i];
+        el.style.cssText = 'position:absolute;width:'+b[1]+';height:'+b[1]+';top:'+b[2]+';left:'+b[3]
+            + ';border-radius:50%;filter:blur({NEON_BLUR}px)'
+            + ';background:radial-gradient(circle,'+b[0]+' 0%,transparent 70%)'
+            + ';animation:neonP '+(6+i*2.5)+'s ease-in-out infinite'
+            + ';will-change:transform;';
+        orbs.appendChild(el);
+    }});
+    doc.body.appendChild(orbs);
+
+    var kf = doc.createElement('style');
+    kf.id = 'neon-kf';
+    kf.textContent = '@keyframes neonP{{0%,100%{{opacity:1}}50%{{opacity:0.42}}}}';
+    doc.head.appendChild(kf);
+
+    // scroll parallax
+    var mainEl = doc.querySelector('[data-testid="stAppViewContainer"]')
+               || doc.querySelector('.main') || doc.documentElement;
+    var tick = false;
     mainEl.addEventListener('scroll', function() {{
-        if (!ticking) {{
-            window.requestAnimationFrame(function() {{
+        if (!tick) {{
+            requestAnimationFrame(function() {{
                 var sy = mainEl.scrollTop;
-                container.querySelectorAll('.neon-blob').forEach(function(el) {{
-                    el.style.transform = 'translateY(' + (sy * parseFloat(el.dataset.speed)) + 'px)';
+                orbs.querySelectorAll('[data-spd]').forEach(function(el) {{
+                    el.style.transform = 'translateY(' + sy * +el.dataset.spd + 'px)';
                 }});
-                ticking = false;
+                tick = false;
             }});
-            ticking = true;
+            tick = true;
         }}
-    }}, {{passive: true}});
+    }}, {{passive:true}});
+
+    // ── INJECT SEARCH BAR CSS INTO AG GRID IFRAME ─────────────────────────────
+    var agCSS = {repr(_ag_css)};
+
+    function applyAgStyle() {{
+        var frames = doc.querySelectorAll('iframe');
+        var hit = false;
+        frames.forEach(function(f) {{
+            try {{
+                var fd = f.contentDocument || f.contentWindow.document;
+                if (!fd || !fd.querySelector('.ag-theme-streamlit')) return;
+                hit = true;
+                var old = fd.getElementById('ag-search-custom');
+                if (old) old.parentNode.removeChild(old);
+                var s = fd.createElement('style');
+                s.id = 'ag-search-custom';
+                s.textContent = agCSS;
+                (fd.head || fd.documentElement).appendChild(s);
+            }} catch(e) {{}}
+        }});
+        if (!hit) setTimeout(applyAgStyle, 300);
+    }}
+    applyAgStyle();
+
 }})();
 </script>
 """, height=0)
