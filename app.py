@@ -535,6 +535,7 @@ _ss_defaults = {
     "excl_set":       [],
     "reassignments":  {},
     "last_save_msg":  "",
+    "grid_version":   0,      # increments on each Save → forces grid remount so Status updates
 }
 for k, v in _ss_defaults.items():
     if k not in st.session_state:
@@ -749,7 +750,7 @@ orders_df = orders_df.sort_values(["Bucket", "Revenue"], ascending=[True, False]
 grid_df = orders_df[["Order", "Line item type", "Bucket", "Revenue", "Impressions", "Status"]].copy()
 grid_df = grid_df.rename(columns={"Line item type": "Type"})
 
-# ── Action panel (always visible; Save reads AG Grid selection) ───────────────
+# ── Action panel ──────────────────────────────────────────────────────────────
 
 ca, cb, cc = st.columns([2, 3, 1])
 with ca:
@@ -770,25 +771,27 @@ with cb:
 with cc:
     save_clicked = st.button("💾 Save", type="primary", key="ord_save")
 
-# ── Flash message from previous Save ─────────────────────────────────────────
+# ── Last save confirmation (persists until next save replaces it) ─────────────
 
 if st.session_state.last_save_msg:
     st.success(st.session_state.last_save_msg)
-    st.session_state.last_save_msg = ""
 
-# ── Search bar (above grid, full-width, clearly visible) ─────────────────────
+# ── Search (form so BOTH Enter key and the Filter button work) ────────────────
 
 st.markdown(
     f"<p style='margin:0.8rem 0 0.3rem 0;font-size:0.78rem;font-weight:700;"
     f"text-transform:uppercase;letter-spacing:0.07em;color:{MUTED}'>🔍 Search Orders</p>",
     unsafe_allow_html=True,
 )
-order_search = st.text_input(
-    "Search orders",
-    placeholder="Type any part of an order name, type, or bucket… then press Enter",
-    key="order_search",
-    label_visibility="collapsed",
-)
+with st.form("order_search_form", border=False):
+    fc1, fc2 = st.columns([7, 1])
+    order_search = fc1.text_input(
+        "search",
+        placeholder="Type order name, type, or bucket — then press Enter or click ↵ Filter",
+        key="order_search_input",
+        label_visibility="collapsed",
+    )
+    fc2.form_submit_button("↵ Filter", use_container_width=True)
 
 if order_search:
     mask = (
@@ -799,7 +802,7 @@ if order_search:
     filtered_grid = grid_df[mask].reset_index(drop=True)
     n_match = len(filtered_grid)
     st.caption(
-        f"**{n_match}** of {len(grid_df)} orders match — "
+        f"**{n_match}** of {len(grid_df)} orders match '{order_search}' — "
         f"header ☑ checkbox selects all {n_match} result{'s' if n_match != 1 else ''}"
     )
 else:
@@ -807,9 +810,10 @@ else:
     st.caption(f"{len(grid_df)} orders total — header ☑ checkbox selects all")
 
 # ── AG Grid ───────────────────────────────────────────────────────────────────
-# Dynamic key: changes when search term changes → remounts grid with filtered data.
-# When Save button triggers a rerun the key stays the same (search unchanged)
-# so the component preserves its client-side selection and response captures it.
+# Key encodes search term AND grid_version. Search change → new key → grid
+# remounts with filtered rows. Save → grid_version increments → grid remounts
+# with updated Status column. Between those two events the key is stable so the
+# component keeps its client-side selection and response captures it on Save.
 
 gb = GridOptionsBuilder.from_dataframe(filtered_grid)
 gb.configure_selection("multiple", use_checkbox=True, header_checkbox=True)
@@ -843,7 +847,7 @@ gb.configure_grid_options(
 )
 grid_opts = gb.build()
 
-ag_key = f"orders_grid_{abs(hash(order_search or ''))}"
+ag_key = f"orders_grid_{abs(hash(order_search or ''))}_{st.session_state.grid_version}"
 
 response = AgGrid(
     filtered_grid,
@@ -870,38 +874,60 @@ if save_clicked:
         names = ", ".join(sel_orders[:3]) + (f" +{len(sel_orders)-3} more" if len(sel_orders) > 3 else "")
         if action_choice == "Exclude":
             st.session_state.excl_set = list(set(st.session_state.excl_set + sel_orders))
-            st.session_state.last_save_msg = f"🚫 Excluded {len(sel_orders)} order(s): {names}"
+            st.session_state.last_save_msg = f"✅ Excluded {len(sel_orders)} order(s): {names}"
         else:
             for o in sel_orders:
                 st.session_state.reassignments[o] = reclass_to
-            st.session_state.last_save_msg = f"🔄 Reclassified {len(sel_orders)} order(s) → {reclass_to}: {names}"
+            st.session_state.last_save_msg = f"✅ Reclassified {len(sel_orders)} order(s) → {reclass_to}: {names}"
+        st.session_state.grid_version += 1   # force grid remount so Status column refreshes
         st.rerun()
     else:
-        st.warning("No orders selected — tick the checkboxes in the left-most column of the table first, then click Save.")
+        st.warning(
+            "No rows selected — tick the checkbox on the left side of each row, "
+            "then click 💾 Save."
+        )
 
-# ── Active changes (collapsible QA panel) ─────────────────────────────────────
+# ── Changes summary (always visible, QA before Run Analysis) ──────────────────
 
 n_excl = len(st.session_state.excl_set)
 n_rc   = len(st.session_state.reassignments)
 total_changes = n_excl + n_rc
 
-if total_changes > 0:
-    label = f"📋 Active changes — {total_changes} modification{'s' if total_changes != 1 else ''}"
-    if n_excl: label += f"  ·  {n_excl} excluded"
-    if n_rc:   label += f"  ·  {n_rc} reclassified"
+st.divider()
 
-    with st.expander(label, expanded=True):
+if total_changes == 0:
+    st.caption(
+        "No changes yet. Use the table above to exclude orders from the analysis "
+        "or move them to a different bucket."
+    )
+else:
+    badge_parts = []
+    if n_excl: badge_parts.append(f"🚫 {n_excl} excluded")
+    if n_rc:   badge_parts.append(f"🔄 {n_rc} reclassified")
+    st.markdown(
+        f"<div style='background:{ACCENT_BG};border:1.5px solid {ACCENT_RING};"
+        f"border-radius:10px;padding:0.7rem 1.1rem;margin-bottom:0.5rem;"
+        f"font-weight:600;color:{ACCENT};font-size:0.92rem'>"
+        f"📋 Pending changes — {' · '.join(badge_parts)} — "
+        f"these will be applied when you click <strong>▶ Run Analysis</strong></div>",
+        unsafe_allow_html=True,
+    )
+
+    exp_label = f"Review & undo changes ({total_changes} total)"
+    with st.expander(exp_label, expanded=True):
         undo_excl, undo_rc = [], []
 
         if st.session_state.excl_set:
-            st.markdown(f"**Exclusions** — removed from all comparisons")
+            st.markdown("**Exclusions** — these orders are removed from all comparisons")
             for o in st.session_state.excl_set:
                 c1, c2 = st.columns([9, 1])
                 c1.markdown(f"🚫 {o}")
                 if c2.button("Undo", key=f"undo_e_{o}"): undo_excl.append(o)
 
         if st.session_state.reassignments:
-            st.markdown(f"**Reclassifications** — moved to a different bucket")
+            if st.session_state.excl_set:
+                st.markdown("")
+            st.markdown("**Reclassifications** — these orders are moved to a different bucket")
             for o, new_t in list(st.session_state.reassignments.items()):
                 orig = order_type_map.get(o, "?")
                 c1, c2 = st.columns([9, 1])
@@ -909,16 +935,20 @@ if total_changes > 0:
                 if c2.button("Undo", key=f"undo_r_{o}"): undo_rc.append(o)
 
         st.divider()
-        if st.button("🗑 Clear all changes", key="clear_all"):
+        if st.button("🗑 Clear ALL changes", key="clear_all"):
             st.session_state.excl_set = []
             st.session_state.reassignments = {}
+            st.session_state.last_save_msg = ""
+            st.session_state.grid_version += 1
             st.rerun()
 
         if undo_excl:
             st.session_state.excl_set = [o for o in st.session_state.excl_set if o not in undo_excl]
+            st.session_state.grid_version += 1
             st.rerun()
         if undo_rc:
             for o in undo_rc: del st.session_state.reassignments[o]
+            st.session_state.grid_version += 1
             st.rerun()
 
 # ── APPLY CHANGES TO GAM ──────────────────────────────────────────────────────
