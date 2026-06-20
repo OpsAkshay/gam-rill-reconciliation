@@ -54,35 +54,40 @@ html, body, [class*="css"] {{
                 border-color 0.2s ease, box-shadow 0.2s ease;
 }}
 
-/* ── APP BACKGROUND ───────────────────────────────────────────────────────── */
-html, body {{ background: {BG} !important; }}
-.stApp, [data-testid="stAppViewContainer"], .main {{
-    background-color: {BG} !important;
-}}
-.main .block-container {{
-    background-color: {BG} !important;
-    padding-top: 1.5rem;
-}}
-[data-testid="stHeader"] {{ background-color: {BG} !important; }}
-[data-testid="stDecoration"] {{ display: none; }}
-
-/* ── NEON AMBIENT GLOW (body::before sits above stApp via z-index) ────────── */
-body::before {{
+/* ── NEON AMBIENT GLOW ────────────────────────────────────────────────────── */
+/* html::before at z-index:-1 sits BEHIND everything.                         */
+/* .stApp / .main / .block-container are transparent so the neon shows through */
+html::before {{
     content: '';
     position: fixed;
     inset: 0;
     pointer-events: none;
-    z-index: 9999;
+    z-index: -1;
     background:
-        radial-gradient(ellipse 680px 680px at -6% -8%,  {NEON1} 0%, transparent 62%),
-        radial-gradient(ellipse 580px 580px at 108% 36%, {NEON2} 0%, transparent 62%),
-        radial-gradient(ellipse 520px 520px at 42% 108%, {NEON3} 0%, transparent 62%);
+        radial-gradient(ellipse 700px 700px at -6% -8%,  {NEON1} 0%, transparent 60%),
+        radial-gradient(ellipse 600px 600px at 108% 36%, {NEON2} 0%, transparent 60%),
+        radial-gradient(ellipse 560px 560px at 42% 108%, {NEON3} 0%, transparent 60%);
     animation: neonBreathe 10s ease-in-out infinite;
 }}
 @keyframes neonBreathe {{
-    0%,100% {{ opacity: 0.9; }}
-    50%      {{ opacity: 0.45; }}
+    0%,100% {{ opacity: 1; }}
+    50%      {{ opacity: 0.5; }}
 }}
+
+/* ── APP BACKGROUND ───────────────────────────────────────────────────────── */
+html, body {{ background: {BG}; }}
+/* Transparent so html::before neon shows through */
+.stApp,
+[data-testid="stAppViewContainer"],
+.main {{
+    background: transparent !important;
+}}
+.main .block-container {{
+    background: transparent !important;
+    padding-top: 1.5rem;
+}}
+[data-testid="stHeader"] {{ background-color: {BG} !important; }}
+[data-testid="stDecoration"] {{ display: none; }}
 
 /* ── SIDEBAR ──────────────────────────────────────────────────────────────── */
 section[data-testid="stSidebar"] {{
@@ -898,8 +903,15 @@ grid_opts = gb.build()
 # iframe boundary to cross. Styles the floating filter row and input element.
 _on_grid_ready = JsCode(f"""
 function(params) {{
-    setTimeout(function() {{
+    var attempts = 0;
+    function applyStyles() {{
         var row = document.querySelector('.ag-header-row-floating-filter');
+        var inputs = document.querySelectorAll('.ag-floating-filter-full-body input');
+        if ((!row || inputs.length === 0) && attempts < 30) {{
+            attempts++;
+            setTimeout(applyStyles, 100);
+            return;
+        }}
         if (row) {{
             row.style.height = '72px';
             row.style.background = 'linear-gradient(90deg,{ACCENT_BG} 0%,{_neon_grad_end} 100%)';
@@ -920,7 +932,6 @@ function(params) {{
             w.style.display = 'flex';
             w.style.alignItems = 'center';
         }});
-        var inputs = document.querySelectorAll('.ag-floating-filter-full-body input');
         inputs.forEach(function(inp) {{
             inp.style.height = '100%';
             inp.style.fontSize = '1rem';
@@ -931,9 +942,10 @@ function(params) {{
             inp.style.boxShadow = 'none';
             inp.style.outline = 'none';
             inp.style.width = '100%';
-            inp.placeholder = 'Type to search orders instantly…';
+            inp.placeholder = '🔍  Type to search orders…';
         }});
-    }}, 150);
+    }}
+    setTimeout(applyStyles, 80);
 }}
 """)
 grid_opts["onGridReady"] = _on_grid_ready
