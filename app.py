@@ -952,7 +952,7 @@ function(params) {{
     setTimeout(applyStyles, 80);
 }}
 """)
-grid_opts["onGridReady"] = _on_grid_ready
+grid_opts["onFirstDataRendered"] = _on_grid_ready
 
 ag_key = f"orders_grid_{st.session_state.grid_version}"
 
