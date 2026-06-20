@@ -8,6 +8,7 @@ import pandas as pd
 import numpy as np
 # pyrefly: ignore [missing-import]
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
+from streamlit_keyup import st_keyup  # pyrefly: ignore [missing-import]
 
 st.set_page_config(
     page_title="GAM × Rill Reconciliation",
@@ -862,9 +863,9 @@ if st.session_state.last_save_msg:
 
 # ── Order search bar ──────────────────────────────────────────────────────────
 
-_search = st.text_input(
+_search = st_keyup(
     "",
-    placeholder="🔍  Search orders — press Enter to filter…",
+    placeholder="🔍  Search orders — type to filter instantly…",
     key="order_search",
     label_visibility="collapsed",
 )
