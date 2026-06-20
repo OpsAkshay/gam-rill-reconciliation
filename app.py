@@ -5,6 +5,7 @@ import base64
 import streamlit as st
 import pandas as pd
 import numpy as np
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 
 st.set_page_config(
     page_title="GAM × Rill Reconciliation",
@@ -476,7 +477,7 @@ c6.metric("→ AMAZON",   f"{n_amazon:,}", help="Price priority with Amazon/APS/
 
 n_excl = len(st.session_state.excl_set)
 n_rc   = len(st.session_state.reassignments)
-orders_subtitle = "review classifications · select to exclude or reclassify"
+orders_subtitle = "type in any column header to search · check rows · then Save"
 if n_excl or n_rc:
     parts = []
     if n_excl: parts.append(f"{n_excl} excluded")
@@ -503,105 +504,94 @@ orders_df["Status"] = orders_df["Order"].apply(
     lambda o: "🚫 Excluded" if o in excl_set_current
     else ("🔄 Reclassified" if o in st.session_state.reassignments else "")
 )
-orders_df = orders_df.sort_values(["Bucket", "Revenue"], ascending=[True, False])
+orders_df = orders_df.sort_values(["Bucket", "Revenue"], ascending=[True, False]).reset_index(drop=True)
 
-display_df = orders_df[["Order", "Line item type", "Bucket", "Revenue", "Impressions", "Status"]].copy()
-display_df = display_df.rename(columns={"Line item type": "Type"})
-display_df["Revenue"]     = display_df["Revenue"].apply(lambda x: f"${x:,.2f}")
-display_df["Impressions"] = display_df["Impressions"].apply(lambda x: f"{int(x):,}")
+# Keep Revenue/Impressions numeric so AG Grid can sort and filter them correctly
+grid_df = orders_df[["Order", "Line item type", "Bucket", "Revenue", "Impressions", "Status"]].copy()
+grid_df = grid_df.rename(columns={"Line item type": "Type"})
 
-# ── Search + Select All ───────────────────────────────────────────────────────
+# ── Action panel (always visible; Save reads AG Grid selection below) ─────────
 
-s_col, b_col = st.columns([5, 2])
-with s_col:
-    search = st.text_input(
-        "Search orders",
-        placeholder="Type to filter — e.g. Amazon, A9, Criteo, S2S, House…",
+st.caption("Use the filter row in each column to search, check rows to select, then choose an action:")
+ca, cb, cc = st.columns([2, 3, 1])
+with ca:
+    action_choice = st.radio(
+        "Action", ["Exclude", "Reclassify"],
+        horizontal=True, key="ord_action",
         label_visibility="collapsed",
     )
-filtered_df = (
-    display_df[display_df["Order"].str.contains(search, case=False, na=False)]
-    if search else display_df
-)
-with b_col:
-    if search and not filtered_df.empty:
-        if st.button(
-            f"☑  Select all {len(filtered_df)} result{'s' if len(filtered_df) != 1 else ''}",
-            use_container_width=True,
-        ):
-            st.session_state["_order_sel"] = filtered_df["Order"].tolist()
-            st.rerun()
-    elif search and filtered_df.empty:
-        st.caption("No matches.")
-    else:
-        st.caption(f"{len(display_df)} orders total")
-
-# ── Action panel placeholder (rendered HERE so it appears above the table) ────
-
-action_ph = st.empty()
-
-# ── Orders table ──────────────────────────────────────────────────────────────
-
-event = st.dataframe(
-    filtered_df,
-    use_container_width=True,
-    hide_index=True,
-    on_select="rerun",
-    selection_mode="multi-row",
-    height=min(400, 35 + len(filtered_df) * 35),
-)
-
-# Row clicks override session state; Select All button already set it above
-if event.selection.rows:
-    st.session_state["_order_sel"] = filtered_df.iloc[event.selection.rows]["Order"].tolist()
-
-sel_orders = st.session_state.get("_order_sel", [])
-
-# ── Fill action panel placeholder (appears above the table) ───────────────────
-
-with action_ph.container():
-    if sel_orders:
-        names_preview = ", ".join(sel_orders[:5]) + ("…" if len(sel_orders) > 5 else "")
-        st.markdown(
-            f'<div class="action-panel">'
-            f'<strong>✔ {len(sel_orders)} order(s) selected:</strong> '
-            f'<span style="color:#1e40af">{names_preview}</span><br>'
-            f'<span style="font-size:0.82rem;color:#64748b">'
-            f'Choose an action and click Save.</span>'
-            f'</div>',
-            unsafe_allow_html=True,
+with cb:
+    if action_choice == "Reclassify":
+        reclass_to = st.selectbox(
+            "Move to", RECLASSIFY_TARGETS, key="ord_reclass_to",
+            label_visibility="collapsed",
         )
-        ca, cb, cc, cd = st.columns([2, 3, 1, 1])
-        with ca:
-            action_choice = st.radio(
-                "Action", ["Exclude", "Reclassify"],
-                horizontal=True, key="ord_action",
-                label_visibility="collapsed",
-            )
-        with cb:
-            if action_choice == "Reclassify":
-                reclass_to = st.selectbox(
-                    "Move to", RECLASSIFY_TARGETS, key="ord_reclass_to",
-                    label_visibility="collapsed",
-                )
-            else:
-                st.caption("Removed from all comparisons.")
-                reclass_to = None
-        with cc:
-            if st.button("💾 Save", type="primary", key="ord_save"):
-                if action_choice == "Exclude":
-                    st.session_state.excl_set = list(set(st.session_state.excl_set + sel_orders))
-                else:
-                    for o in sel_orders:
-                        st.session_state.reassignments[o] = reclass_to
-                st.session_state["_order_sel"] = []
-                st.rerun()
-        with cd:
-            if st.button("✕ Clear", key="ord_clear"):
-                st.session_state["_order_sel"] = []
-                st.rerun()
     else:
-        st.caption("👆 Click rows to select, or search above and use Select All.")
+        st.caption("Selected orders will be removed from all comparisons.")
+        reclass_to = None
+with cc:
+    # Render button here for layout; handle it AFTER AgGrid so response is defined
+    save_clicked = st.button("💾 Save", type="primary", key="ord_save")
+
+# ── AG Grid table — all interaction is client-side, zero reruns on scroll/select ──
+
+gb = GridOptionsBuilder.from_dataframe(grid_df)
+gb.configure_selection("multiple", use_checkbox=True, header_checkbox=True)
+gb.configure_default_column(
+    filter=True, sortable=True, resizable=True,
+    floatingFilter=True, floatingFilterComponentParams={"suppressFilterButton": True},
+)
+gb.configure_column("Order",       min_width=260, flex=3, pinned="left")
+gb.configure_column("Type",        min_width=140, flex=2)
+gb.configure_column("Bucket",      min_width=180, flex=2)
+gb.configure_column(
+    "Revenue", min_width=110, flex=1,
+    type=["numericColumn", "numberColumnFilter"],
+    valueFormatter="'$' + Number(value).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})",
+)
+gb.configure_column(
+    "Impressions", min_width=120, flex=1,
+    type=["numericColumn", "numberColumnFilter"],
+    valueFormatter="Number(value).toLocaleString('en-US')",
+)
+gb.configure_column("Status", min_width=130, flex=1, filter=False, floatingFilter=False)
+gb.configure_grid_options(
+    rowHeight=36, headerHeight=40,
+    suppressMovableColumns=True,
+    animateRows=True,
+)
+grid_opts = gb.build()
+
+response = AgGrid(
+    grid_df,
+    gridOptions=grid_opts,
+    update_mode=GridUpdateMode.NO_UPDATE,
+    data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
+    height=430,
+    theme="streamlit",
+    fit_columns_on_grid_load=True,
+    allow_unsafe_jscode=True,
+    key="orders_grid",
+)
+
+# ── Handle Save (response is now defined) ─────────────────────────────────────
+
+if save_clicked:
+    sel_raw = response.get("selected_rows") or []
+    if isinstance(sel_raw, pd.DataFrame):
+        sel_orders = sel_raw["Order"].tolist() if not sel_raw.empty else []
+    else:
+        sel_orders = [r["Order"] for r in sel_raw] if sel_raw else []
+
+    if sel_orders:
+        if action_choice == "Exclude":
+            st.session_state.excl_set = list(set(st.session_state.excl_set + sel_orders))
+        else:
+            for o in sel_orders:
+                st.session_state.reassignments[o] = reclass_to
+        st.rerun()
+    else:
+        st.warning("No orders checked — tick the checkboxes in the table first.")
 
 # ── Active changes ─────────────────────────────────────────────────────────────
 
