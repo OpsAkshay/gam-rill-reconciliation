@@ -265,6 +265,27 @@ hr {{ border-color: {BORDER} !important; margin: 1.2rem 0; }}
     position: relative;
     margin-bottom: 0.5rem;
 }}
+
+/* ── AG GRID DARK MODE ────────────────────────────────────────────────────── */
+.ag-theme-streamlit {{
+    --ag-background-color: {SURFACE} !important;
+    --ag-header-background-color: {SURFACE2} !important;
+    --ag-odd-row-background-color: {BG} !important;
+    --ag-foreground-color: {TEXT} !important;
+    --ag-header-foreground-color: {TEXT} !important;
+    --ag-secondary-foreground-color: {MUTED} !important;
+    --ag-border-color: {BORDER} !important;
+    --ag-row-hover-color: {ACCENT_BG} !important;
+    --ag-selected-row-background-color: {ACCENT_BG} !important;
+    --ag-checkbox-checked-color: {ACCENT} !important;
+    --ag-range-selection-border-color: {ACCENT} !important;
+    --ag-font-family: 'Inter', 'Segoe UI', sans-serif !important;
+    --ag-font-size: 13px !important;
+}}
+.ag-theme-streamlit .ag-header-cell-label,
+.ag-theme-streamlit .ag-cell {{ color: {TEXT} !important; }}
+.ag-theme-streamlit .ag-paging-panel {{ color: {MUTED} !important; background: {SURFACE} !important; }}
+.ag-theme-streamlit .ag-root-wrapper {{ border-radius: 10px; overflow: hidden; border: 1px solid {BORDER} !important; }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -797,7 +818,9 @@ gb.configure_grid_options(
 )
 grid_opts = gb.build()
 
-ag_theme = "alpine-dark" if dm else "alpine"
+# Key changes whenever search term changes — forces AG Grid to re-render with filtered data.
+# Theme is always "streamlit"; dark styling is handled via CSS variable overrides above.
+ag_key = f"orders_grid_{abs(hash(order_search or ''))}"
 
 response = AgGrid(
     filtered_grid,
@@ -805,10 +828,10 @@ response = AgGrid(
     update_mode=GridUpdateMode.NO_UPDATE,
     data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
     height=420,
-    theme=ag_theme,
+    theme="streamlit",
     fit_columns_on_grid_load=True,
     allow_unsafe_jscode=True,
-    key="orders_grid",
+    key=ag_key,
 )
 
 # ── Handle Save ───────────────────────────────────────────────────────────────
