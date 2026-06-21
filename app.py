@@ -532,12 +532,12 @@ def date_range_bar(date_range_str, sites):
 
 def render_summary(tables: dict):
     _section_defs = [
-        ("L1 By Date",        "Level 1 — By Date"),
-        ("L2 Date x Site",    "Level 2 — By Date × Site"),
-        ("L3 Source Group",   "Level 3 — By Source Group"),
-        ("L3b SrcGrp x Site", "Level 3b — Source Group × Site"),
-        ("L3c Full Drill",    "Level 3c — Source Group × Site × Date"),
-        ("L4 Ad Unit",        "Level 4 — By Ad Unit"),
+        ("L1 By Date",        "Overall by Date"),
+        ("L2 Date x Site",    "By Date × Site"),
+        ("L3 Source Group",   "By Source Group"),
+        ("L3b SrcGrp x Site", "Source Group × Site"),
+        ("L3c Full Drill",    "Source Group × Site × Date"),
+        ("L4 Ad Unit",        "By Ad Unit"),
     ]
     has_any = False
     for sheet, label in _section_defs:
@@ -567,10 +567,6 @@ def render_summary(tables: dict):
 def render_report(tables: dict, show_levels: dict, date_range_str: str, sites: list):
     date_range_bar(date_range_str, sites)
 
-    section("🚨", "Issues Summary", f"rows where any discrepancy > {ALERT_PCT:.0f}%")
-    render_summary(tables)
-    st.markdown("<hr style='margin:1.2rem 0;border-color:" + BORDER + "'>", unsafe_allow_html=True)
-
     label_map = {
         "Level 1 — Overall by Date":             ("📅", "Level 1 — Overall by Date", ""),
         "Level 2 — By Date × Site":              ("🌐", "Level 2 — By Date × Site", ""),
@@ -599,6 +595,16 @@ def render_report(tables: dict, show_levels: dict, date_range_str: str, sites: l
                     "House → House  ·  Standard → Standard"
                 )
             render_table(tables[sheet])
+
+    # ── Collapsible issue summary (bottom, scoped to active levels) ───────────
+    active_sheets = {
+        lvl_to_sheet[lvl]
+        for lvl in ALL_LEVELS
+        if show_levels.get(lvl) and lvl_to_sheet[lvl] in tables and not tables[lvl_to_sheet[lvl]].empty
+    }
+    active_tables = {k: v for k, v in tables.items() if k in active_sheets}
+    with st.expander(f"🚨 Issue Summary — rows with >{ALERT_PCT:.0f}% discrepancy", expanded=False):
+        render_summary(active_tables)
 
 
 # ── SESSION STATE ─────────────────────────────────────────────────────────────
