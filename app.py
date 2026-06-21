@@ -352,7 +352,7 @@ RILL_REQUIRED = [
     "Ad Unit", "Total Impressions", "Revenue",
 ]
 GAM_GROUP = {
-    "Price priority": "Prebid + Price Priority",
+    "Price priority": "Pre-bid / Price Priority",
     "Ad Exchange":    "ADX + OB",
     "OB":             "ADX + OB",
     "AMAZON":         "Amazon",
@@ -360,8 +360,8 @@ GAM_GROUP = {
     "Standard":       "Standard",
 }
 RILL_GROUP = {
-    "Prebid":         "Prebid + Price Priority",
-    "Price Priority": "Prebid + Price Priority",
+    "Prebid":         "Pre-bid / Price Priority",
+    "Price Priority": "Pre-bid / Price Priority",
     "OB-ADX":         "ADX + OB",
     "ADX":            "ADX + OB",
     "OB":             "ADX + OB",
@@ -555,7 +555,7 @@ def render_report(tables: dict, show_levels: dict, date_range_str: str, sites: l
             section(icon, title, sub)
             if lvl == "Level 3 — By Source Group":
                 st.caption(
-                    "**Mapping:** Price priority → Prebid + Price Priority  ·  "
+                    "**Mapping:** Price priority → Pre-bid / Price Priority  ·  "
                     "Ad Exchange + OB → ADX + OB  ·  AMAZON → Amazon  ·  "
                     "House → House  ·  Standard → Standard"
                 )
