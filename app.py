@@ -370,7 +370,7 @@ RILL_GROUP = {
     "Standard":       "Standard",
 }
 WARN_PCT  = 5.0
-ALERT_PCT = 20.0
+ALERT_PCT = 10.0
 ALL_LEVELS = [
     "Level 1 — Overall by Date",
     "Level 2 — By Date × Site",
@@ -530,8 +530,47 @@ def date_range_bar(date_range_str, sites):
     """, unsafe_allow_html=True)
 
 
+def render_summary(tables: dict):
+    _section_defs = [
+        ("L1 By Date",        "Level 1 — By Date"),
+        ("L2 Date x Site",    "Level 2 — By Date × Site"),
+        ("L3 Source Group",   "Level 3 — By Source Group"),
+        ("L3b SrcGrp x Site", "Level 3b — Source Group × Site"),
+        ("L3c Full Drill",    "Level 3c — Source Group × Site × Date"),
+        ("L4 Ad Unit",        "Level 4 — By Ad Unit"),
+    ]
+    has_any = False
+    for sheet, label in _section_defs:
+        df = tables.get(sheet)
+        if df is None or df.empty:
+            continue
+        imp = pd.to_numeric(df["IMP_Disc%"], errors="coerce").abs()
+        rev = pd.to_numeric(df["Rev_Disc%"], errors="coerce").abs()
+        issues = df[(imp > ALERT_PCT) | (rev > ALERT_PCT)].copy()
+        if issues.empty:
+            continue
+        has_any = True
+        n = len(issues)
+        st.markdown(
+            f"<div style='font-size:0.95rem;font-weight:600;color:{TEXT};"
+            f"margin:0.8rem 0 0.3rem 0'>"
+            f"🔴 {label} &nbsp;·&nbsp; "
+            f"<span style='color:{ACCENT}'>{n} row{'s' if n>1 else ''} flagged</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+        render_table(issues)
+    if not has_any:
+        st.success(f"✅ No discrepancies exceed {ALERT_PCT:.0f}% in any section.")
+
+
 def render_report(tables: dict, show_levels: dict, date_range_str: str, sites: list):
     date_range_bar(date_range_str, sites)
+
+    section("🚨", "Issues Summary", f"rows where any discrepancy > {ALERT_PCT:.0f}%")
+    render_summary(tables)
+    st.markdown("<hr style='margin:1.2rem 0;border-color:" + BORDER + "'>", unsafe_allow_html=True)
+
     label_map = {
         "Level 1 — Overall by Date":             ("📅", "Level 1 — Overall by Date", ""),
         "Level 2 — By Date × Site":              ("🌐", "Level 2 — By Date × Site", ""),
