@@ -434,19 +434,57 @@ def clean_gam(df):
 
 
 def site_from_gam(val):
+    """Extract publisher name from GAM ad unit hierarchy.
+
+    Works regardless of publisher conventions — always takes the
+    top-level segment (before the first section separator ' - ', ' / ', etc.)
+    and before the slot separator ('»', '>').
+
+    Examples:
+      'GB News - Celebrity » MPU_1'        → 'GB News'
+      'The Guardian - Politics » Banner'   → 'The Guardian'
+      'DailyMail » LeaderBoard'            → 'DailyMail'
+      'Primis_Video_Android'               → 'Primis_Video_Android'
+    """
     if pd.isna(val): return ""
     s = str(val)
+    # Strip slot (everything after the slot separator)
     for sep in [" Â» ", " » ", " > "]:
-        if sep in s: return s.split(sep)[0].strip()
+        if sep in s:
+            s = s.split(sep)[0].strip()
+            break
+    # Take publisher (first segment before section separator)
+    for sep in [" - ", " / ", " | "]:
+        if sep in s:
+            return s.split(sep)[0].strip()
     return s.strip()
 
 
-def norm_site(s):
-    """Normalize 'GB News - Celebrity' or 'gbnews_celebrity' to a common key.
-    'GB News - Celebrity' → 'gbnews_celebrity'
-    'gbnews_celebrity'   → 'gbnews_celebrity'  (unchanged)
+def norm_pub(s: str) -> str:
+    """Collapse a publisher name to a minimal match key.
+
+    Removes ALL separators and whitespace and lowercases, so both
+    'GB News' and 'gbnews' reduce to 'gbnews'.
     """
-    return s.lower().replace(" - ", "_").replace(" ", "")
+    import re as _re
+    return _re.sub(r"[\s\-_./|]", "", str(s).lower())
+
+
+def rill_publisher(segment: str, pub_codes: list) -> str:
+    """Map a Rill path segment to a known GAM publisher code.
+
+    Rill fuses publisher+section into one segment (e.g. 'gbnews_celebrity').
+    We strip all separators and do a longest-prefix match against the
+    normalised GAM publisher codes built from the same upload.
+
+    Falls back to the normalised segment itself so unknown publishers
+    still produce a stable key.
+    """
+    clean = norm_pub(segment)
+    for code in pub_codes:  # sorted longest-first
+        if clean.startswith(code):
+            return code
+    return clean
 
 
 def parse_rill_adunit(val):
@@ -498,7 +536,7 @@ def render_table(df: pd.DataFrame):
             raw = pd.to_numeric(df[c], errors="coerce")
             disp[c] = raw.apply(fmt_pct)
     if "site" in disp.columns:
-        disp["site"] = disp["site"].map(lambda x: _site_display_map.get(x, x))
+        disp["site"] = disp["site"].map(lambda x: _pub_display.get(x, x))
     disp = disp.rename(columns={
         "GAM_IMP": "GAM Imps", "GAM_Rev": "GAM Rev",
         "Rill_IMP": "Rill Imps", "Rill_Rev": "Rill Rev",
@@ -755,12 +793,15 @@ gam["Date"]         = pd.to_datetime(gam["Date"]).dt.date
 gam["site"]         = gam["Ad unit (all levels)"].apply(site_from_gam)
 gam["source_group"] = gam["Line item type"].map(GAM_GROUP)
 
-# Build display map BEFORE normalizing: "gbnews_celebrity" → "GB News - Celebrity"
-_site_display_map = {norm_site(s): s for s in gam["site"].unique() if s}
-gam["site"] = gam["site"].apply(norm_site)
+# Build publisher lookup from GAM BEFORE normalising.
+# _pub_display maps norm key → readable name, e.g. "gbnews" → "GB News"
+# _pub_codes is sorted longest-first for greedy prefix matching on Rill segments.
+_pub_display  = {norm_pub(s): s for s in gam["site"].unique() if s}
+_pub_codes    = sorted(_pub_display.keys(), key=len, reverse=True)
+gam["site"]   = gam["site"].apply(norm_pub)
 
 dates = sorted(gam["Date"].unique())
-sites = sorted(_site_display_map.get(s, s) for s in sorted(gam["site"].unique()))
+sites = sorted(_pub_display.get(s, s) for s in sorted(gam["site"].unique()))
 date_fmt       = lambda d: d.strftime("%-d %b %Y")
 date_range_str = date_fmt(dates[0]) if len(dates) == 1 else f"{date_fmt(dates[0])} – {date_fmt(dates[-1])}"
 
@@ -820,7 +861,7 @@ rill["site"] = rill.apply(
     lambda r: r["site_from_path"] if r["site_from_path"] != ""
     else domain_to_site.get(r["Domain"], site_from_domain(r["Domain"])), axis=1,
 )
-rill["site"] = rill["site"].apply(norm_site)
+rill["site"] = rill["site"].apply(lambda x: rill_publisher(x, _pub_codes) if x else x)
 rill_data = rill[
     rill["Revenue Source Type"].notna() & (rill["Revenue Source Type"].str.strip() != "")
 ].copy()
