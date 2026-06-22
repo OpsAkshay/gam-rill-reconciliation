@@ -441,6 +441,14 @@ def site_from_gam(val):
     return s.strip()
 
 
+def norm_site(s):
+    """Normalize 'GB News - Celebrity' or 'gbnews_celebrity' to a common key.
+    'GB News - Celebrity' → 'gbnews_celebrity'
+    'gbnews_celebrity'   → 'gbnews_celebrity'  (unchanged)
+    """
+    return s.lower().replace(" - ", "_").replace(" ", "")
+
+
 def parse_rill_adunit(val):
     if pd.isna(val) or str(val).strip() == "Others": return "", "Others"
     parts = str(val).strip("/").split("/")
@@ -489,6 +497,8 @@ def render_table(df: pd.DataFrame):
         if c in disp.columns:
             raw = pd.to_numeric(df[c], errors="coerce")
             disp[c] = raw.apply(fmt_pct)
+    if "site" in disp.columns:
+        disp["site"] = disp["site"].map(lambda x: _site_display_map.get(x, x))
     disp = disp.rename(columns={
         "GAM_IMP": "GAM Imps", "GAM_Rev": "GAM Rev",
         "Rill_IMP": "Rill Imps", "Rill_Rev": "Rill Rev",
@@ -745,8 +755,12 @@ gam["Date"]         = pd.to_datetime(gam["Date"]).dt.date
 gam["site"]         = gam["Ad unit (all levels)"].apply(site_from_gam)
 gam["source_group"] = gam["Line item type"].map(GAM_GROUP)
 
+# Build display map BEFORE normalizing: "gbnews_celebrity" → "GB News - Celebrity"
+_site_display_map = {norm_site(s): s for s in gam["site"].unique() if s}
+gam["site"] = gam["site"].apply(norm_site)
+
 dates = sorted(gam["Date"].unique())
-sites = sorted(gam["site"].unique())
+sites = sorted(_site_display_map.get(s, s) for s in sorted(gam["site"].unique()))
 date_fmt       = lambda d: d.strftime("%-d %b %Y")
 date_range_str = date_fmt(dates[0]) if len(dates) == 1 else f"{date_fmt(dates[0])} – {date_fmt(dates[-1])}"
 
@@ -806,6 +820,7 @@ rill["site"] = rill.apply(
     lambda r: r["site_from_path"] if r["site_from_path"] != ""
     else domain_to_site.get(r["Domain"], site_from_domain(r["Domain"])), axis=1,
 )
+rill["site"] = rill["site"].apply(norm_site)
 rill_data = rill[
     rill["Revenue Source Type"].notna() & (rill["Revenue Source Type"].str.strip() != "")
 ].copy()
