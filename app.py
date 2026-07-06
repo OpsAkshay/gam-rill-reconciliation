@@ -1,4 +1,5 @@
 import json
+import re
 import zlib
 import base64
 
@@ -460,39 +461,73 @@ def site_from_gam(val):
     return s.strip()
 
 
-def norm_pub(s: str) -> str:
-    """Collapse a publisher name to a minimal match key.
+def gam_level_columns(columns) -> list:
+    """Return the 'Ad unit code level N' column names present, ordered by N.
 
-    Removes ALL separators and whitespace and lowercases, so both
-    'GB News' and 'gbnews' reduce to 'gbnews'.
+    GAM exports don't guarantee column order (level 5/6 can appear swapped
+    depending on the account), so levels must be identified by parsing the
+    trailing number in the header, never by position.
     """
-    import re as _re
-    return _re.sub(r"[\s\-_./|]", "", str(s).lower())
+    numbered = []
+    for col in columns:
+        m = re.fullmatch(r"Ad unit code level (\d+)", str(col).strip())
+        if m:
+            numbered.append((int(m.group(1)), col))
+    numbered.sort(key=lambda x: x[0])
+    return [c for _, c in numbered]
 
 
-def rill_publisher(segment: str, pub_codes: list) -> str:
-    """Map a Rill path segment to a known GAM publisher code.
+def _clean_code(v):
+    """Normalise a single ad-unit code cell to a lowercase string, or None if blank.
 
-    Rill fuses publisher+section into one segment (e.g. 'gbnews_celebrity').
-    We strip all separators and do a longest-prefix match against the
-    normalised GAM publisher codes built from the same upload.
-
-    Falls back to the normalised segment itself so unknown publishers
-    still produce a stable key.
+    Purely-numeric codes are sometimes read by pandas as floats (e.g.
+    '5926448863.0'); strip the trailing '.0' so they still match the
+    equivalent Rill path segment.
     """
-    clean = norm_pub(segment)
-    for code in pub_codes:  # sorted longest-first
-        if clean.startswith(code):
-            return code
-    return clean
+    if pd.isna(v):
+        return None
+    s = str(v).strip()
+    if s == "":
+        return None
+    if re.fullmatch(r"-?\d+\.0", s):
+        s = s[:-2]
+    return s.lower()
 
 
-def parse_rill_adunit(val):
-    if pd.isna(val) or str(val).strip() == "Others": return "", "Others"
-    parts = str(val).strip("/").split("/")
-    if len(parts) >= 3: return parts[-2], parts[-1]
-    if len(parts) == 2: return parts[0], parts[1]
-    return "", parts[0]
+def gam_key_path(row, level_cols: list) -> str:
+    """Build the lowercased '/'-joined ad-unit code path for one GAM row.
+
+    GAM's 'Ad unit code level N' columns are the literal decomposition of
+    the same path Rill encodes as a single slash-delimited string — this is
+    what makes the two sides joinable exactly, without fuzzy name matching,
+    regardless of publisher-specific naming conventions.
+    """
+    parts = [c for c in (_clean_code(row[col]) for col in level_cols) if c is not None]
+    if not parts:
+        leaf = _clean_code(row.get("Ad unit code"))
+        if leaf is not None:
+            parts = [leaf]
+    return "/".join(parts)
+
+
+def rill_key_path(val) -> str:
+    """Build the lowercased '/'-joined ad-unit code path for a Rill 'Ad Unit' cell.
+
+    Rill prefixes the path with a leading id segment ('network,id' or a bare
+    numeric id) that has no GAM equivalent — drop it. Everything after it
+    lines up 1:1, in order, with GAM's level codes. Returns '' for
+    blank/'Others' rows, which Rill itself couldn't attribute to a unit.
+    """
+    if pd.isna(val):
+        return ""
+    s = str(val).strip()
+    if s == "" or s == "Others":
+        return ""
+    s = s.strip("/")
+    parts = s.split("/")
+    if len(parts) <= 1:
+        return ""
+    return "/".join(p.lower() for p in parts[1:])
 
 
 def site_from_domain(domain):
@@ -790,15 +825,26 @@ gam["Total impressions"] = (
     .pipe(pd.to_numeric, errors="coerce").fillna(0)
 )
 gam["Date"]         = pd.to_datetime(gam["Date"]).dt.date
-gam["site"]         = gam["Ad unit (all levels)"].apply(site_from_gam)
+
+# Exact ad-unit-level join key: GAM's "Ad unit code level N" columns are the
+# literal decomposition of the path Rill encodes as a single slash-delimited
+# string, so this is the precise join key — not a fuzzy name match.
+_gam_level_cols     = gam_level_columns(gam.columns)
+gam["key_path"]     = gam.apply(lambda r: gam_key_path(r, _gam_level_cols), axis=1)
+_gam_key_parts      = gam["key_path"].str.split("/", n=1)
+gam["site"]         = _gam_key_parts.str[0].fillna("")
+gam["ad_unit"]      = _gam_key_parts.str[1].fillna("")
 gam["source_group"] = gam["Line item type"].map(GAM_GROUP)
 
-# Build publisher lookup from GAM BEFORE normalising.
-# _pub_display maps norm key → readable name, e.g. "gbnews" → "GB News"
-# _pub_codes is sorted longest-first for greedy prefix matching on Rill segments.
-_pub_display  = {norm_pub(s): s for s in gam["site"].unique() if s}
-_pub_codes    = sorted(_pub_display.keys(), key=len, reverse=True)
-gam["site"]   = gam["site"].apply(norm_pub)
+# Human-friendly display name per site code, taken straight from GAM's own
+# "Ad unit (all levels)" column, e.g. site code 'gbnews_celebrity' → 'GB News'.
+_site_display_raw = gam["Ad unit (all levels)"].apply(site_from_gam)
+_pub_display = (
+    pd.DataFrame({"site": gam["site"], "display": _site_display_raw})
+    .query("site != ''")
+    .drop_duplicates("site")
+    .set_index("site")["display"].to_dict()
+)
 
 dates = sorted(gam["Date"].unique())
 sites = sorted(_pub_display.get(s, s) for s in sorted(gam["site"].unique()))
@@ -849,19 +895,18 @@ rill["Total Impressions"] = pd.to_numeric(rill["Total Impressions"], errors="coe
 rill["Revenue"]           = pd.to_numeric(rill["Revenue"],           errors="coerce").fillna(0)
 rill["source_group"]      = rill["Revenue Source Type"].map(RILL_GROUP)
 
-parsed = rill["Ad Unit"].apply(parse_rill_adunit)
-rill["site_from_path"] = parsed.apply(lambda t: t[0])
-rill["ad_unit_code"]   = parsed.apply(lambda t: t[1])
-domain_to_site = (
-    rill[rill["site_from_path"] != ""]
-    .drop_duplicates("Domain")[["Domain", "site_from_path"]]
-    .set_index("Domain")["site_from_path"].to_dict()
-)
+rill["key_path"]     = rill["Ad Unit"].apply(rill_key_path)
+_rill_key_parts      = rill["key_path"].str.split("/", n=1)
+rill["site_code"]    = _rill_key_parts.str[0].fillna("")
+rill["ad_unit"]      = _rill_key_parts.str[1].fillna("")
+# Rows Rill couldn't attribute to a specific ad unit ('Others'/blank) still
+# need a site bucket for the date/source-group rollups — fall back to the
+# domain, clearly marked so it can never collide with a real matched site
+# code (and so it surfaces honestly as unmatched revenue, not a false match).
 rill["site"] = rill.apply(
-    lambda r: r["site_from_path"] if r["site_from_path"] != ""
-    else domain_to_site.get(r["Domain"], site_from_domain(r["Domain"])), axis=1,
+    lambda r: r["site_code"] if r["site_code"] != ""
+    else f"(unmatched) {site_from_domain(r['Domain'])}", axis=1,
 )
-rill["site"] = rill["site"].apply(lambda x: rill_publisher(x, _pub_codes) if x else x)
 rill_data = rill[
     rill["Revenue Source Type"].notna() & (rill["Revenue Source Type"].str.strip() != "")
 ].copy()
@@ -1212,22 +1257,26 @@ l3c = build_disc(agg_gam_grp(["Date", "site", "source_group"]),
                  agg_rill_grp(["Date", "site", "source_group"]),
                  ["Date", "site", "source_group"], sort_by=["site", "Date", "source_group"])
 
-gam_ad  = set(gam_final["Ad unit code"].dropna().unique())
-rill_ad = set(rill_data[rill_data["ad_unit_code"] != "Others"]["ad_unit_code"].dropna().unique())
-common  = gam_ad & rill_ad
-if common:
-    gam_l4 = (
-        gam_final[gam_final["Ad unit code"].isin(common)]
-        .groupby(["site", "Ad unit code"])
-        .agg(GAM_IMP=("Total impressions", "sum"), GAM_Rev=("Total CPM and CPC revenue", "sum"))
-        .reset_index().rename(columns={"Ad unit code": "ad_unit"})
-    )
-    rill_l4 = (
-        rill_data[rill_data["ad_unit_code"].isin(common)]
-        .groupby(["site", "ad_unit_code"])
-        .agg(Rill_IMP=("Total Impressions", "sum"), Rill_Rev=("Revenue", "sum"))
-        .reset_index().rename(columns={"ad_unit_code": "ad_unit"})
-    )
+gam_l4_all = (
+    gam_final[gam_final["ad_unit"] != ""]
+    .groupby(["site", "ad_unit"])
+    .agg(GAM_IMP=("Total impressions", "sum"), GAM_Rev=("Total CPM and CPC revenue", "sum"))
+    .reset_index()
+)
+rill_l4_all = (
+    rill_data[(rill_data["ad_unit"] != "") & (rill_data["site_code"] != "")]
+    .groupby(["site", "ad_unit"])
+    .agg(Rill_IMP=("Total Impressions", "sum"), Rill_Rev=("Revenue", "sum"))
+    .reset_index()
+)
+# Exact join on the full (site, ad_unit) code path — restrict to keys present
+# on both sides ("GAM ∩ Rill only"), same intersection semantics as before,
+# just keyed correctly so leaf codes that repeat across sections/sites
+# (e.g. every GB News section has its own 'mpu_1') never collide.
+common_keys = gam_l4_all.merge(rill_l4_all[["site", "ad_unit"]], on=["site", "ad_unit"])[["site", "ad_unit"]]
+if not common_keys.empty:
+    gam_l4  = gam_l4_all.merge(common_keys, on=["site", "ad_unit"])
+    rill_l4 = rill_l4_all.merge(common_keys, on=["site", "ad_unit"])
     l4 = build_disc(gam_l4, rill_l4, ["site", "ad_unit"]).sort_values("GAM_Rev", ascending=False)
 else:
     l4 = pd.DataFrame()
