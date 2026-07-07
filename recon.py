@@ -305,6 +305,97 @@ def parse_rill(data: bytes) -> Report:
     return Report("rill", df, metrics, dims, warnings)
 
 
+# ── FILE-KIND DETECTION & AUTO-PAIRING ────────────────────────────────────────
+
+def parse_any(data: bytes) -> Report:
+    """Identify a file as GAM or Rill from its columns and parse it.
+
+    GAM exports carry 'Ad unit (all levels)' / 'Ad unit code level N';
+    Rill exports carry a single 'Ad Unit' path column. The two never overlap.
+    """
+    df = read_csv_any(data)
+    if gam_level_columns(df.columns) or "Ad unit (all levels)" in df.columns:
+        return parse_gam(data)
+    if "Ad Unit" in df.columns:
+        return parse_rill(data)
+    raise ValueError(
+        "Unrecognizable file: expected GAM columns ('Ad unit (all levels)' / "
+        "'Ad unit code level N') or a Rill 'Ad Unit' column. "
+        f"Found: {list(df.columns)}"
+    )
+
+
+def derive_site_name(gam: Report, fallback: str) -> str:
+    """Site name from the GAM data itself.
+
+    1. A domain-like top-level unit (contains '.') names the site —
+       WeatherBug's tree has 'weatherbug.com'.
+    2. Else the dominant brand prefix of the unit display names —
+       'GB News - Celebrity', 'GB News - Money', … → 'GB News'.
+    3. Else the uploaded file name.
+    """
+    units = gam.df[["unit_code", "unit_display"]].query("unit_code != ''")
+    if units.empty:
+        return fallback
+    domainish = units.loc[units["unit_code"].str.contains(r"\.", regex=True), "unit_code"]
+    if not domainish.empty:
+        return domainish.value_counts().index[0]
+    displays = units.drop_duplicates("unit_code")["unit_display"].astype(str)
+    leading = displays.str.split(" - ").str[0].str.strip()
+    top = leading.value_counts()
+    if not top.empty and top.iloc[0] >= len(displays) / 2:
+        return top.index[0]
+    return fallback
+
+
+def auto_pair(gam_files: list, rill_files: list) -> tuple:
+    """Pair GAM and Rill files by ad-unit path overlap (greedy, best first).
+
+    Args are lists of (filename, Report). Returns (pairs, notes) where notes
+    flag anything that could not be paired confidently.
+    """
+    gam_paths = {
+        i: set(rep.df["key_path"]) - {""}
+        for i, (_, rep) in enumerate(gam_files)
+    }
+    rill_paths = {
+        j: set(rep.df.loc[~rep.df["is_others"], "key_path"]) - {""}
+        for j, (_, rep) in enumerate(rill_files)
+    }
+
+    candidates = sorted(
+        (
+            (len(gam_paths[i] & rill_paths[j]), i, j)
+            for i in gam_paths for j in rill_paths
+        ),
+        key=lambda t: -t[0],
+    )
+    used_g, used_r, pairs, notes, seen_names = set(), set(), [], [], set()
+    for overlap, i, j in candidates:
+        if overlap == 0 or i in used_g or j in used_r:
+            continue
+        used_g.add(i)
+        used_r.add(j)
+        gam_fn, gam_rep = gam_files[i]
+        rill_fn, rill_rep = rill_files[j]
+        name = derive_site_name(gam_rep, fallback=gam_fn.rsplit(".", 1)[0])
+        n, base = 2, name
+        while name in seen_names:
+            name = f"{base} ({n})"
+            n += 1
+        seen_names.add(name)
+        pairs.append((SitePair(name, gam_rep, rill_rep), gam_fn, rill_fn,
+                      overlap, len(rill_paths[j])))
+
+    for i, (fn, _) in enumerate(gam_files):
+        if i not in used_g:
+            notes.append(f"GAM file **{fn}** matches no uploaded Rill file — not included.")
+    for j, (fn, _) in enumerate(rill_files):
+        if j not in used_r:
+            notes.append(f"Rill file **{fn}** matches no uploaded GAM file — not included.")
+    return pairs, notes
+
+
 # ── SITE PAIR ─────────────────────────────────────────────────────────────────
 
 @dataclass

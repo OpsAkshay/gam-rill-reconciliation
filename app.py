@@ -335,7 +335,6 @@ hr {{ border-color: {BORDER} !important; margin: 1.2rem 0; }}
 
 # ── CONSTANTS ─────────────────────────────────────────────────────────────────
 
-MAX_SITES = 6
 URL_WARN_BYTES = 8000
 
 # key → (icon, title, subtitle, on-by-default)
@@ -353,13 +352,8 @@ RECLASSIFY_TARGETS = ["AMAZON", "Price priority", "Ad Exchange", "House", "Stand
 # ── CACHED PARSERS ────────────────────────────────────────────────────────────
 
 @st.cache_data(show_spinner=False)
-def parse_gam_cached(data: bytes):
-    return recon.parse_gam(data)
-
-
-@st.cache_data(show_spinner=False)
-def parse_rill_cached(data: bytes):
-    return recon.parse_rill(data)
+def parse_any_cached(data: bytes):
+    return recon.parse_any(data)
 
 
 # ── RENDER HELPERS ────────────────────────────────────────────────────────────
@@ -553,19 +547,15 @@ if "r" in params:
 # ── SIDEBAR — SITE PAIRS ──────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.markdown("## 🌐 Sites")
-    st.caption("One GAM + Rill export pair per site. The pair defines the site — paths are never guessed.")
-    n_sites = st.number_input("Number of sites", min_value=1, max_value=MAX_SITES, value=2, step=1)
-
-    pair_inputs = []
-    for i in range(n_sites):
-        st.markdown(f"**Site {i + 1}**")
-        name = st.text_input("Site name", value="", placeholder="e.g. GB News", key=f"site_name_{i}",
-                             label_visibility="collapsed")
-        gam_file = st.file_uploader(f"GAM export (site {i + 1})", type="csv", key=f"gam_{i}")
-        rill_file = st.file_uploader(f"Rill export (site {i + 1})", type="csv", key=f"rill_{i}")
-        pair_inputs.append((name, gam_file, rill_file))
-        st.markdown("")
+    st.markdown("## 📁 Upload Exports")
+    st.caption(
+        "Dump all your CSVs here — GAM and Rill, one or many sites, in any order. "
+        "Files are identified, paired and named automatically from their data."
+    )
+    uploaded_files = st.file_uploader(
+        "CSV exports", type="csv", accept_multiple_files=True,
+        label_visibility="collapsed",
+    )
 
     st.divider()
 
@@ -591,39 +581,64 @@ with st.sidebar:
         st.session_state.report_ready = True
         st.session_state.link_generated = False
 
-# ── PARSE & VALIDATE PAIRS ────────────────────────────────────────────────────
+# ── DETECT, PAIR & VALIDATE ───────────────────────────────────────────────────
+
+problems, gam_files, rill_files = [], [], []
+for f in uploaded_files or []:
+    try:
+        rep = parse_any_cached(f.getvalue())
+    except ValueError as e:
+        problems.append(f"**{f.name}**: {e}")
+        continue
+    (gam_files if rep.kind == "gam" else rill_files).append((f.name, rep))
+
+paired, pair_notes = recon.auto_pair(gam_files, rill_files) if (gam_files and rill_files) else ([], [])
 
 pairs = []
-problems = []
-for i, (name, gam_file, rill_file) in enumerate(pair_inputs):
-    if not (gam_file and rill_file):
-        continue
-    site_name = name.strip() or f"Site {i + 1}"
-    try:
-        gam_rep = parse_gam_cached(gam_file.getvalue())
-    except ValueError as e:
-        problems.append(f"**{site_name} — GAM file** ({gam_file.name}): {e}")
-        continue
-    try:
-        rill_rep = parse_rill_cached(rill_file.getvalue())
-    except ValueError as e:
-        problems.append(f"**{site_name} — Rill file** ({rill_file.name}): {e}")
-        continue
-    pair = recon.SitePair(site_name, gam_rep, rill_rep)
+for pair, gam_fn, rill_fn, overlap, rill_total in paired:
     if not pair.metrics:
         problems.append(
-            f"**{site_name}**: the two files share no comparable metric — "
-            f"GAM has {gam_rep.metrics}, Rill has {rill_rep.metrics}."
+            f"**{pair.name}**: {gam_fn} and {rill_fn} share no comparable metric — "
+            f"GAM has {pair.gam.metrics}, Rill has {pair.rill.metrics}."
         )
         continue
     pairs.append(pair)
 
 for msg in problems:
     st.error(msg)
+for msg in pair_notes:
+    st.warning(msg)
 
 if not pairs:
-    st.info("👈  Upload a GAM + Rill CSV pair for at least one site to get started.")
+    if gam_files and not rill_files:
+        st.info("Found only GAM file(s) so far — add the matching Rill export(s).")
+    elif rill_files and not gam_files:
+        st.info("Found only Rill file(s) so far — add the matching GAM export(s).")
+    else:
+        st.info("👈  Dump your GAM + Rill CSVs in the sidebar to get started.")
     st.stop()
+
+# Show how files were paired + allow renaming the auto-detected site names.
+_pair_meta = {p.name: (g, r, ov, tot) for p, g, r, ov, tot in paired if p in pairs}
+with st.expander(f"🔎 File pairing — {len(pairs)} site(s) detected", expanded=False):
+    for p in pairs:
+        gam_fn, rill_fn, overlap, rill_total = _pair_meta[p.name]
+        st.markdown(
+            f"**{p.name}** — `{gam_fn}` ⇄ `{rill_fn}` "
+            f"<span style='color:{MUTED}'>({overlap}/{rill_total} Rill ad-unit paths matched)</span>",
+            unsafe_allow_html=True,
+        )
+    st.caption("Site names are read from the data (domain or brand prefix). Rename if needed:")
+    new_names = {}
+    for p in pairs:
+        new_names[p.name] = st.text_input(
+            f"Name for {p.name}", value=p.name, key=f"rename_{p.name}",
+            label_visibility="collapsed",
+        )
+for p in pairs:
+    renamed = new_names.get(p.name, "").strip()
+    if renamed:
+        p.name = renamed
 
 # ── DATA SUMMARY ──────────────────────────────────────────────────────────────
 

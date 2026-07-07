@@ -83,6 +83,50 @@ def test_full_revenue_format_still_parses():
     assert rrep.df["key_path"].iloc[0] == "gbnews_home/mpu_1"
 
 
+# ── AUTO-DETECTION & PAIRING (dump-everything workflow) ───────────────────────
+
+def test_parse_any_detects_kind(pairs):
+    assert recon.parse_any(GB_GAM.read_bytes()).kind == "gam"
+    assert recon.parse_any(WB_GAM.read_bytes()).kind == "gam"
+    assert recon.parse_any(GB_RILL.read_bytes()).kind == "rill"
+    assert recon.parse_any(WB_RILL.read_bytes()).kind == "rill"
+    with pytest.raises(ValueError, match="Unrecognizable"):
+        recon.parse_any(b"foo,bar\n1,2\n")
+
+
+def test_auto_pair_shuffled_files(pairs):
+    """Four files dumped in arbitrary order pair up by path overlap."""
+    gams = [("wb.csv", recon.parse_gam(WB_GAM.read_bytes())),
+            ("gb.csv", recon.parse_gam(GB_GAM.read_bytes()))]
+    rills = [("r1.csv", recon.parse_rill(GB_RILL.read_bytes())),
+             ("r2.csv", recon.parse_rill(WB_RILL.read_bytes()))]
+    paired, notes = recon.auto_pair(gams, rills)
+    assert notes == []
+    by_gam = {g: (p, r, ov, tot) for p, g, r, ov, tot in paired}
+    assert by_gam["gb.csv"][1] == "r1.csv"     # GB GAM ⇄ GB Rill
+    assert by_gam["wb.csv"][1] == "r2.csv"     # WB GAM ⇄ WB Rill
+    # every attributable Rill path matched its paired GAM
+    for p, g, r, ov, tot in paired:
+        assert ov == tot
+
+
+def test_auto_pair_flags_leftovers(pairs):
+    gams = [("gb.csv", recon.parse_gam(GB_GAM.read_bytes())),
+            ("wb.csv", recon.parse_gam(WB_GAM.read_bytes()))]
+    rills = [("r1.csv", recon.parse_rill(GB_RILL.read_bytes()))]
+    paired, notes = recon.auto_pair(gams, rills)
+    assert len(paired) == 1
+    assert paired[0][0].name == "GB News"
+    assert len(notes) == 1 and "wb.csv" in notes[0]
+
+
+def test_derived_site_names(pairs):
+    gb = recon.parse_gam(GB_GAM.read_bytes())
+    wb = recon.parse_gam(WB_GAM.read_bytes())
+    assert recon.derive_site_name(gb, "fallback") == "GB News"       # brand prefix
+    assert recon.derive_site_name(wb, "fallback") == "weatherbug.com"  # domain unit
+
+
 # ── PATH JOIN (the acid test: 100% match on both real publishers) ─────────────
 
 def test_every_rill_path_matches_gam(pairs):

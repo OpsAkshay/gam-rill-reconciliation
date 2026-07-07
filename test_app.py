@@ -22,7 +22,7 @@ GB_RILL = ROOT / "holistic_revenue_analytics_internal_filtered_20260702165704.cs
 def test_app_boots_to_upload_state():
     at = AppTest.from_file("app.py", default_timeout=30).run()
     assert not at.exception
-    assert any("Upload a GAM + Rill CSV pair" in str(i.value) for i in at.info)
+    assert any("Dump your GAM + Rill CSVs" in str(i.value) for i in at.info)
 
 
 def _pairs():
