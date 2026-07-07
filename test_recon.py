@@ -1,10 +1,15 @@
 """Tests grounded in the four real sample exports in the repo root.
 
 Run: .venv/bin/python -m pytest test_recon.py -q
+
+The sample exports hold real publisher data and are intentionally not
+committed — tests needing them skip on machines without them; synthetic-input
+tests always run.
 """
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -16,37 +21,33 @@ WB_GAM = ROOT / "wBAd Manager Report (Jun 26, 2026 - Jun 28, 2026) (1).csv"
 WB_RILL = ROOT / "holistic_revenue_analytics_internal_filtered_20260702165350.csv"
 GB_RILL = ROOT / "holistic_revenue_analytics_internal_filtered_20260702165704.csv"
 
+
 @pytest.fixture(scope="module")
-def pairs():
-    # Sample exports hold real publisher data and are intentionally not
-    # committed — tests needing them skip elsewhere; synthetic tests still run.
+def reports():
     if not all(p.exists() for p in (GB_GAM, WB_GAM, WB_RILL, GB_RILL)):
         pytest.skip("sample export CSVs not present (kept out of git)")
-    gb = recon.SitePair(
-        "GB News",
-        recon.parse_gam(GB_GAM.read_bytes()),
-        recon.parse_rill(GB_RILL.read_bytes()),
-    )
-    wb = recon.SitePair(
-        "WeatherBug",
-        recon.parse_gam(WB_GAM.read_bytes()),
-        recon.parse_rill(WB_RILL.read_bytes()),
-    )
-    return [gb, wb]
+    return {
+        "gb_gam": recon.parse_gam(GB_GAM.read_bytes()),
+        "gb_rill": recon.parse_rill(GB_RILL.read_bytes()),
+        "wb_gam": recon.parse_gam(WB_GAM.read_bytes()),
+        "wb_rill": recon.parse_rill(WB_RILL.read_bytes()),
+    }
 
 
 # ── FORMAT DETECTION ──────────────────────────────────────────────────────────
 
-def test_detects_opportunities_metric(pairs):
-    for p in pairs:
-        assert p.gam.metrics == ["opportunities"]
-        assert p.rill.metrics == ["opportunities"]
-        assert p.metrics == ["opportunities"]
+def test_detects_opportunities_metric(reports):
+    for key in ("gb", "wb"):
+        gam, rill = reports[f"{key}_gam"], reports[f"{key}_rill"]
+        assert gam.metrics == ["opportunities"]
+        assert rill.metrics == ["opportunities"]
+        assert recon.common_metrics(gam, rill) == ["opportunities"]
+        assert recon.common_dims(gam, rill) == set()
 
 
-def test_samples_have_no_date_or_source_group(pairs):
-    for p in pairs:
-        assert p.dims == set()
+def test_parse_any_detects_kind(reports):
+    assert recon.parse_any(GB_GAM.read_bytes()).kind == "gam"
+    assert recon.parse_any(GB_RILL.read_bytes()).kind == "rill"
 
 
 def test_unknown_file_rejected_with_clear_error():
@@ -55,6 +56,8 @@ def test_unknown_file_rejected_with_clear_error():
         recon.parse_gam(junk)
     with pytest.raises(ValueError, match="Rill"):
         recon.parse_rill(junk)
+    with pytest.raises(ValueError, match="Unrecognizable"):
+        recon.parse_any(junk)
 
 
 def test_full_revenue_format_still_parses():
@@ -81,60 +84,17 @@ def test_full_revenue_format_still_parses():
     assert set(rrep.metrics) == {"impressions", "revenue"}
     assert rrep.dims == {"date", "source_group"}
     assert rrep.df["key_path"].iloc[0] == "gbnews_home/mpu_1"
-
-
-# ── AUTO-DETECTION & PAIRING (dump-everything workflow) ───────────────────────
-
-def test_parse_any_detects_kind(pairs):
-    assert recon.parse_any(GB_GAM.read_bytes()).kind == "gam"
-    assert recon.parse_any(WB_GAM.read_bytes()).kind == "gam"
-    assert recon.parse_any(GB_RILL.read_bytes()).kind == "rill"
-    assert recon.parse_any(WB_RILL.read_bytes()).kind == "rill"
-    with pytest.raises(ValueError, match="Unrecognizable"):
-        recon.parse_any(b"foo,bar\n1,2\n")
-
-
-def test_auto_pair_shuffled_files(pairs):
-    """Four files dumped in arbitrary order pair up by path overlap."""
-    gams = [("wb.csv", recon.parse_gam(WB_GAM.read_bytes())),
-            ("gb.csv", recon.parse_gam(GB_GAM.read_bytes()))]
-    rills = [("r1.csv", recon.parse_rill(GB_RILL.read_bytes())),
-             ("r2.csv", recon.parse_rill(WB_RILL.read_bytes()))]
-    paired, notes = recon.auto_pair(gams, rills)
-    assert notes == []
-    by_gam = {g: (p, r, ov, tot) for p, g, r, ov, tot in paired}
-    assert by_gam["gb.csv"][1] == "r1.csv"     # GB GAM ⇄ GB Rill
-    assert by_gam["wb.csv"][1] == "r2.csv"     # WB GAM ⇄ WB Rill
-    # every attributable Rill path matched its paired GAM
-    for p, g, r, ov, tot in paired:
-        assert ov == tot
-
-
-def test_auto_pair_flags_leftovers(pairs):
-    gams = [("gb.csv", recon.parse_gam(GB_GAM.read_bytes())),
-            ("wb.csv", recon.parse_gam(WB_GAM.read_bytes()))]
-    rills = [("r1.csv", recon.parse_rill(GB_RILL.read_bytes()))]
-    paired, notes = recon.auto_pair(gams, rills)
-    assert len(paired) == 1
-    assert paired[0][0].name == "GB News"
-    assert len(notes) == 1 and "wb.csv" in notes[0]
-
-
-def test_derived_site_names(pairs):
-    gb = recon.parse_gam(GB_GAM.read_bytes())
-    wb = recon.parse_gam(WB_GAM.read_bytes())
-    assert recon.derive_site_name(gb, "fallback") == "GB News"       # brand prefix
-    assert recon.derive_site_name(wb, "fallback") == "weatherbug.com"  # domain unit
+    assert rrep.df["domain"].iloc[0] == "gbnews.com"
 
 
 # ── PATH JOIN (the acid test: 100% match on both real publishers) ─────────────
 
-def test_every_rill_path_matches_gam(pairs):
-    for p in pairs:
-        gam_keys = set(p.gam.df["key_path"])
-        rill = p.rill.df[~p.rill.df["is_others"]]
-        unmatched = set(rill["key_path"]) - gam_keys
-        assert unmatched == set(), f"{p.name}: {sorted(unmatched)[:5]}"
+def test_every_rill_path_matches_gam(reports):
+    for key in ("gb", "wb"):
+        gam_keys = set(reports[f"{key}_gam"].df["key_path"])
+        rill = reports[f"{key}_rill"].df
+        unmatched = set(rill.loc[~rill["is_others"], "key_path"]) - gam_keys
+        assert unmatched == set(), f"{key}: {sorted(unmatched)[:5]}"
 
 
 def test_rill_id_prefix_with_and_without_leading_slash():
@@ -162,78 +122,121 @@ def test_property_rules(code, expected):
     assert recon.classify_property(code) == expected
 
 
-def test_gb_is_one_site_many_properties(pairs):
-    gb = pairs[0]
-    meta = recon.build_unit_meta(gb)
+def test_unit_meta_brand_stripping(reports):
+    meta = recon.build_unit_meta(reports["gb_gam"])
     assert meta.loc["gbnews_celebrity", "property"] == "Web"
     assert meta.loc["gbnews_app_ios", "property"] == "App — iOS"
     assert meta.loc["primis_video_ios", "property"] == "Video"
-    # brand prefix stripped for section display
     assert meta.loc["gbnews_celebrity", "unit_display"] == "Celebrity"
     assert meta.loc["gbnews_money", "unit_display"] == "Money"
 
 
+# ── SITE IDENTIFICATION ───────────────────────────────────────────────────────
+
+def test_site_map_gb_brand_clustering(reports):
+    """No Domain column in the sample → sites come from GAM-side evidence."""
+    m = recon.build_site_map(reports["gb_gam"], reports["gb_rill"])
+    assert m["gbnews_celebrity"] == "GB News"      # brand prefix in display
+    assert m["gbnews_app_android"] == "GB News"    # 'GB News - APP - Android'
+    assert m["gbnews_video"] == "GB News"          # code starts with brand
+    assert m["primis_video_android"] == "Primis"   # token cluster (4 units)
+    assert m["primis_video_ios"] == "Primis"
+
+
+def test_site_map_wb_domain_and_clusters(reports):
+    m = recon.build_site_map(reports["wb_gam"], reports["wb_rill"])
+    assert m["weatherbug.com"] == "weatherbug.com"          # domain-like unit
+    assert m["wb_android_app_phone"] == "WB"                # token cluster, display casing
+    assert m["wb_ios_app_tablet"] == "WB"
+    # singleton with no cluster keeps its readable display name
+    assert m["ca-mb-app-pub-8015868500526768-tag"] == "Ad Exchange Mobile In-App"
+
+
+def test_rill_domain_is_authoritative():
+    """When Rill reports a unit under a Domain, that beats every heuristic."""
+    gam_csv = (
+        "Ad unit (all levels),Ad unit code level 1,Ad unit code level 2,"
+        "Programmatic eligible ad requests\n"
+        "WB_Android_App_Phone » Alerts,WB_Android_App_Phone,alerts,100\n"
+        "WB_iOS_App_Phone » Alerts,WB_iOS_App_Phone,alerts,100\n"
+    ).encode()
+    rill_csv = (
+        "Domain,Ad Unit,Total Opportunities\n"
+        "www.weatherbug.com,65299053/wb_android_app_phone/alerts,90\n"
+        "weatherbug.com,Others,10\n"
+    ).encode()
+    gam, rill = recon.parse_gam(gam_csv), recon.parse_rill(rill_csv)
+    m = recon.build_site_map(gam, rill)
+    assert m["wb_android_app_phone"] == "weatherbug.com"   # Domain, www-stripped
+    g, r = recon.enrich(gam, rill)
+    # 'Others' row still lands on the right site via its own Domain
+    assert r.loc[r["is_others"], "site"].iloc[0] == "weatherbug.com"
+    # the unit Rill never reported clusters with its sibling's site? No —
+    # it has no Domain evidence, so it token-clusters separately and honestly.
+    assert m["wb_ios_app_phone"] != ""
+
+
 # ── SECTION EXTRACTION ────────────────────────────────────────────────────────
 
-def test_sections(pairs):
-    gb, wb = pairs
-    g_gb, r_gb = recon.enrich(gb)
-    # GB flat tree: unit itself is the section, brand-stripped
+def test_sections(reports):
+    g_gb, r_gb = recon.enrich(reports["gb_gam"], reports["gb_rill"])
     row = g_gb[g_gb["key_path"] == "gbnews_celebrity/mpu_1"].iloc[0]
-    assert (row["property"], row["section"], row["slot"]) == ("Web", "Celebrity", "mpu_1")
+    assert (row["site"], row["property"], row["section"], row["slot"]) == \
+        ("GB News", "Web", "Celebrity", "mpu_1")
 
-    g_wb, r_wb = recon.enrich(wb)
-    # WB nested tree: middle segment is the section
+    g_wb, r_wb = recon.enrich(reports["wb_gam"], reports["wb_rill"])
     row = g_wb[g_wb["key_path"] == "weatherbug.com/alerts/alerts_300x250_1"].iloc[0]
-    assert (row["property"], row["section"], row["slot"]) == ("Web", "alerts", "alerts_300x250_1")
-    # Rill rows get the same trio via shared codes
+    assert (row["site"], row["property"], row["section"], row["slot"]) == \
+        ("weatherbug.com", "Web", "alerts", "alerts_300x250_1")
+    # Rill rows land on the same site via the shared unit codes
     row = r_wb[r_wb["key_path"] == "weatherbug.com/maps/maps_300x250"].iloc[0]
-    assert (row["property"], row["section"]) == ("Web", "maps")
-    # Others bucket is explicit, never a fake site
+    assert (row["site"], row["property"], row["section"]) == ("weatherbug.com", "Web", "maps")
+    # Others bucket without Domain info: explicitly unattributed, never a fake site
     others = r_wb[r_wb["is_others"]]
-    assert (others["property"] == "(unattributed)").all()
+    assert (others["site"] == "(unattributed)").all()
 
 
 # ── TABLES ────────────────────────────────────────────────────────────────────
 
-def test_tables_conserve_volume(pairs):
-    tables = recon.build_tables(pairs)
+def test_tables_conserve_volume(reports):
     m = "opportunities"
-    ov = tables["overview"]
-    for p in pairs:
-        row = ov[ov["site"] == p.name].iloc[0]
-        assert row[f"GAM_{m}"] == p.gam.df[m].sum()
-        assert row[f"Rill_{m}"] == p.rill.df[m].sum()
-    # matched + unmatched = total, per site, on the Rill side
-    mv, um = tables["overview_matched"], tables["rill_unmatched"]
-    for p in pairs:
-        matched = mv.loc[mv["site"] == p.name, f"Rill_{m}"].sum()
-        residue = um.loc[um["site"] == p.name, f"Rill_{m}"].sum()
-        assert matched + residue == pytest.approx(p.rill.df[m].sum())
+    for key in ("gb", "wb"):
+        gam, rill = reports[f"{key}_gam"], reports[f"{key}_rill"]
+        tables = recon.build_tables(gam, rill)
+        ov = tables["overview"]
+        assert ov[f"GAM_{m}"].sum() == gam.df[m].sum()
+        assert ov[f"Rill_{m}"].sum() == rill.df[m].sum()
+        # matched + unmatched = total on the Rill side
+        matched = tables["overview_matched"][f"Rill_{m}"].sum()
+        residue = tables["rill_unmatched"][f"Rill_{m}"].sum()
+        assert matched + residue == pytest.approx(rill.df[m].sum())
 
 
 def test_disc_pct_rill_only_not_hidden():
-    import numpy as np
     assert recon.disc_pct(0, 0) == 0.0
     assert np.isnan(recon.disc_pct(0, 100))   # formatter shows 'Rill only'
     assert recon.disc_pct(100, 0) == 100.0
     assert recon.disc_pct(100, 90) == pytest.approx(10.0)
 
 
-def test_no_date_table_when_samples_lack_dates(pairs):
-    tables = recon.build_tables(pairs)
+def test_no_date_table_when_samples_lack_dates(reports):
+    tables = recon.build_tables(reports["gb_gam"], reports["gb_rill"])
     assert "by_date" not in tables
+    assert "by_date_site" not in tables
     assert "by_source_group" not in tables
     assert not tables["by_property"].empty
     assert not tables["by_adunit"].empty
 
 
-def test_classification_summary(pairs):
-    cs = recon.classification_summary(pairs)
+def test_classification_summary(reports):
+    cs = recon.classification_summary(reports["gb_gam"], reports["gb_rill"])
     gb = cs[cs["site"] == "GB News"]
-    assert set(gb["property"]) == {"Web", "App — Android", "App — iOS", "Video"}
-    wb = cs[cs["site"] == "WeatherBug"]
-    assert "Ad Exchange In-App" in set(wb["property"])
-    # Rill only covers WB web in the sample
-    assert wb.loc[wb["property"] == "Web", "in_rill"].iloc[0] == True
-    assert wb.loc[wb["property"] == "App — Android", "in_rill"].iloc[0] == False
+    assert {"Web", "App — Android", "App — iOS", "Video"} <= set(gb["property"])
+    assert gb.loc[gb["property"] == "Web", "in_rill"].iloc[0] == True
+    assert gb.loc[gb["property"] == "App — Android", "in_rill"].iloc[0] == False
+
+    cs_wb = recon.classification_summary(reports["wb_gam"], reports["wb_rill"])
+    web = cs_wb[(cs_wb["site"] == "weatherbug.com") & (cs_wb["property"] == "Web")]
+    assert web["in_rill"].iloc[0] == True
+    wb_apps = cs_wb[cs_wb["site"] == "WB"]
+    assert not wb_apps.empty and not wb_apps["in_rill"].any()

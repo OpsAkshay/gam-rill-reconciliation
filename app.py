@@ -342,6 +342,7 @@ LEVELS = {
     "overview":         ("📊", "Level 1 — Site Overview (full totals)",   "everything in both files, incl. unmatched", True),
     "overview_matched": ("🔗", "Level 1b — Site Overview (matched only)", "paths present on both sides",                True),
     "by_date":          ("📅", "Level 2 — By Date",                        "",                                          True),
+    "by_date_site":     ("🌐", "Level 2b — By Date × Site",                "",                                          True),
     "by_property":      ("🖥️", "Level 3 — Site × Property",               "matched paths",                              True),
     "by_section":       ("🗂️", "Level 4 — Site × Property × Section",     "matched paths",                              True),
     "by_source_group":  ("🏷️", "Level 5 — By Source Group",               "",                                          True),
@@ -547,15 +548,35 @@ if "r" in params:
 # ── SIDEBAR — SITE PAIRS ──────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.markdown("## 📁 Upload Exports")
-    st.caption(
-        "Dump all your CSVs here — GAM and Rill, one or many sites, in any order. "
-        "Files are identified, paired and named automatically from their data."
-    )
-    uploaded_files = st.file_uploader(
-        "CSV exports", type="csv", accept_multiple_files=True,
-        label_visibility="collapsed",
-    )
+    st.markdown("## 📁 Upload Files")
+    with st.expander("GAM — required columns"):
+        st.markdown(
+            "**Dimensions**  \nAd unit (all levels) · Ad unit code (level 1…N)\n\n"
+            "**Metrics** (any of)  \nProgrammatic eligible ad requests  \n"
+            "Total impressions · Total CPM and CPC revenue\n\n"
+            "**Optional**  \nDate · Line item type · Order"
+        )
+    gam_file = st.file_uploader("GAM Export CSV", type="csv", label_visibility="collapsed")
+    if gam_file:
+        st.success(f"✅ {gam_file.name}")
+    else:
+        st.caption("No GAM file uploaded yet.")
+
+    st.markdown("")
+
+    with st.expander("Rill — required columns"):
+        st.markdown(
+            "**Dimensions**  \nAd Unit\n\n"
+            "**Metrics** (any of)  \nTotal Opportunities  \n"
+            "Total Impressions · Revenue\n\n"
+            "**Optional**  \nTs (day) · Revenue Source Type  \n"
+            "Domain — recommended: it powers site identification"
+        )
+    rill_file = st.file_uploader("Rill Export CSV", type="csv", label_visibility="collapsed")
+    if rill_file:
+        st.success(f"✅ {rill_file.name}")
+    else:
+        st.caption("No Rill file uploaded yet.")
 
     st.divider()
 
@@ -581,112 +602,100 @@ with st.sidebar:
         st.session_state.report_ready = True
         st.session_state.link_generated = False
 
-# ── DETECT, PAIR & VALIDATE ───────────────────────────────────────────────────
+# ── PARSE & VALIDATE ──────────────────────────────────────────────────────────
 
-problems, gam_files, rill_files = [], [], []
-for f in uploaded_files or []:
+if not (gam_file and rill_file):
+    st.info("👈  Upload both CSV files in the sidebar to get started.")
+    st.stop()
+
+reports, problems = [], []
+for f in (gam_file, rill_file):
     try:
-        rep = parse_any_cached(f.getvalue())
+        reports.append((f.name, parse_any_cached(f.getvalue())))
     except ValueError as e:
         problems.append(f"**{f.name}**: {e}")
-        continue
-    (gam_files if rep.kind == "gam" else rill_files).append((f.name, rep))
-
-paired, pair_notes = recon.auto_pair(gam_files, rill_files) if (gam_files and rill_files) else ([], [])
-
-pairs = []
-for pair, gam_fn, rill_fn, overlap, rill_total in paired:
-    if not pair.metrics:
-        problems.append(
-            f"**{pair.name}**: {gam_fn} and {rill_fn} share no comparable metric — "
-            f"GAM has {pair.gam.metrics}, Rill has {pair.rill.metrics}."
-        )
-        continue
-    pairs.append(pair)
 
 for msg in problems:
     st.error(msg)
-for msg in pair_notes:
-    st.warning(msg)
-
-if not pairs:
-    if gam_files and not rill_files:
-        st.info("Found only GAM file(s) so far — add the matching Rill export(s).")
-    elif rill_files and not gam_files:
-        st.info("Found only Rill file(s) so far — add the matching GAM export(s).")
-    else:
-        st.info("👈  Dump your GAM + Rill CSVs in the sidebar to get started.")
+if problems:
     st.stop()
 
-# Show how files were paired + allow renaming the auto-detected site names.
-_pair_meta = {p.name: (g, r, ov, tot) for p, g, r, ov, tot in paired if p in pairs}
-with st.expander(f"🔎 File pairing — {len(pairs)} site(s) detected", expanded=False):
-    for p in pairs:
-        gam_fn, rill_fn, overlap, rill_total = _pair_meta[p.name]
-        st.markdown(
-            f"**{p.name}** — `{gam_fn}` ⇄ `{rill_fn}` "
-            f"<span style='color:{MUTED}'>({overlap}/{rill_total} Rill ad-unit paths matched)</span>",
-            unsafe_allow_html=True,
-        )
-    st.caption("Site names are read from the data (domain or brand prefix). Rename if needed:")
-    new_names = {}
-    for p in pairs:
-        new_names[p.name] = st.text_input(
-            f"Name for {p.name}", value=p.name, key=f"rename_{p.name}",
-            label_visibility="collapsed",
-        )
-for p in pairs:
-    renamed = new_names.get(p.name, "").strip()
-    if renamed:
-        p.name = renamed
+kinds = [rep.kind for _, rep in reports]
+if sorted(kinds) != ["gam", "rill"]:
+    which = "GAM" if kinds == ["gam", "gam"] else "Rill"
+    st.error(
+        f"Both uploaded files look like **{which}** exports "
+        f"({reports[0][0]} and {reports[1][0]}). Upload one GAM and one Rill file."
+    )
+    st.stop()
+
+gam_rep = next(rep for _, rep in reports if rep.kind == "gam")
+rill_rep = next(rep for _, rep in reports if rep.kind == "rill")
+if reports[0][1].kind != "gam":
+    st.info(f"ℹ️ Files were in swapped slots — detected {reports[1][0]} as GAM and {reports[0][0]} as Rill from their columns.")
+
+metrics_common = recon.common_metrics(gam_rep, rill_rep)
+if not metrics_common:
+    st.error(
+        "The two files share no comparable metric — "
+        f"GAM has {gam_rep.metrics}, Rill has {rill_rep.metrics}."
+    )
+    st.stop()
 
 # ── DATA SUMMARY ──────────────────────────────────────────────────────────────
 
+dims_common = recon.common_dims(gam_rep, rill_rep)
 all_dates = sorted({
-    d for p in pairs if "date" in p.dims
-    for rep in (p.gam, p.rill) for d in rep.df.get("date", pd.Series(dtype=object)).dropna()
+    d for rep in (gam_rep, rill_rep)
+    for d in rep.df.get("date", pd.Series(dtype=object)).dropna()
 })
 if all_dates:
     _fmt = lambda d: d.strftime("%-d %b %Y")
     date_range_str = _fmt(all_dates[0]) if len(all_dates) == 1 else f"{_fmt(all_dates[0])} – {_fmt(all_dates[-1])}"
 else:
     date_range_str = "No date dimension in these files"
-site_names = [p.name for p in pairs]
+
+site_map = recon.build_site_map(gam_rep, rill_rep)
+site_names = sorted(set(site_map.values()))
 
 section("📌", "Data Summary")
-cols = st.columns(2 + len(pairs))
-cols[0].metric("Sites", f"{len(pairs)}")
-cols[1].metric("Date Range", f"{len(all_dates)} day{'s' if len(all_dates) != 1 else ''}" if all_dates else "—")
-for i, p in enumerate(pairs):
-    cols[2 + i].metric(p.name, f"{len(p.gam.df):,} / {len(p.rill.df):,}",
-                       help="GAM rows / Rill rows")
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Sites", f"{len(site_names)}", help="Identified automatically from the data")
+c2.metric("GAM Rows", f"{len(gam_rep.df):,}")
+c3.metric("Rill Rows", f"{len(rill_rep.df):,}")
+c4.metric("Date Range", f"{len(all_dates)} day{'s' if len(all_dates) != 1 else ''}" if all_dates else "—")
 
-badges = []
-for p in pairs:
-    mets = " ".join(f"<span class='format-badge'>{recon.METRICS[m][2]}</span>" for m in p.metrics)
-    dims = " ".join(f"<span class='format-badge'>{d.replace('_', ' ')}</span>" for d in sorted(p.dims))
-    badges.append(f"<div style='margin:0.2rem 0'><strong style='color:{TEXT}'>{p.name}</strong> — "
-                  f"comparing: {mets}{('  ·  dims: ' + dims) if dims else ''}</div>")
-st.markdown("\n".join(badges), unsafe_allow_html=True)
+mets = " ".join(f"<span class='format-badge'>{recon.METRICS[m][2]}</span>" for m in metrics_common)
+dims = " ".join(f"<span class='format-badge'>{d.replace('_', ' ')}</span>" for d in sorted(dims_common))
+st.markdown(
+    f"<div style='margin:0.2rem 0'>Comparing: {mets}"
+    f"{('  ·  dims: ' + dims) if dims else ''}"
+    f"  ·  Sites: <strong style='color:{TEXT}'>{' · '.join(site_names)}</strong></div>",
+    unsafe_allow_html=True,
+)
+if "domain" not in rill_rep.df.columns:
+    st.caption(
+        "ℹ️ The Rill file has no **Domain** column, so sites were inferred from the GAM "
+        "ad-unit tree alone (brand prefixes and code clusters). Include Domain in the "
+        "Rill export for exact site identification."
+    )
 
 # Date-range alignment check — skew here silently corrupts every number.
-for p in pairs:
-    if "date" in p.gam.dims and "date" in p.rill.dims:
-        g_dates = set(p.gam.df["date"].dropna())
-        r_dates = set(p.rill.df["date"].dropna())
-        if g_dates != r_dates:
-            only_g, only_r = sorted(g_dates - r_dates), sorted(r_dates - g_dates)
-            st.warning(
-                f"⚠️ **{p.name}**: the two files cover different dates — "
-                f"GAM-only: {only_g or '—'} · Rill-only: {only_r or '—'}. "
-                "Discrepancies will be inflated on those days."
-            )
+if "date" in dims_common:
+    g_dates = set(gam_rep.df["date"].dropna())
+    r_dates = set(rill_rep.df["date"].dropna())
+    if g_dates != r_dates:
+        only_g, only_r = sorted(g_dates - r_dates), sorted(r_dates - g_dates)
+        st.warning(
+            "⚠️ The two files cover different dates — "
+            f"GAM-only: {only_g or '—'} · Rill-only: {only_r or '—'}. "
+            "Discrepancies will be inflated on those days."
+        )
 
 # ── ORDERS (only for revenue-format GAM files) ────────────────────────────────
 
-order_pairs = [p for p in pairs if "order" in p.gam.df.columns]
 order_type_map = {}
-if order_pairs:
+if "order" in gam_rep.df.columns:
     n_excl = len(st.session_state.excl_set)
     n_rc   = len(st.session_state.reassignments)
     orders_sub = "search · check rows · choose Exclude or Reclassify · Save"
@@ -697,36 +706,33 @@ if order_pairs:
         orders_sub += "  ·  " + " · ".join(parts)
     section("📋", "Orders", orders_sub)
 
-    frames = []
-    for p in order_pairs:
-        df = p.gam.df
-        sub = df[df["order"].notna() & (df["order"] != "OB")]
-        if sub.empty:
-            continue
-        agg = sub.groupby(["order", "line_item_type"])[p.gam.metrics].sum().reset_index()
-        agg.insert(0, "site", p.name)
-        frames.append(agg)
-        order_type_map.update(
-            sub.drop_duplicates("order").set_index("order")["line_item_type"].to_dict()
+    _gdf = gam_rep.df
+    sub = _gdf[_gdf["order"].notna() & (_gdf["order"] != "OB")]
+    if not sub.empty:
+        # Reflect pending reassignments in the grid's Type/Bucket columns
+        sub = sub.copy()
+        for o, new_t in st.session_state.reassignments.items():
+            sub.loc[sub["order"] == o, "line_item_type"] = new_t
+        orders_df = sub.groupby(["order", "line_item_type"])[gam_rep.metrics].sum().reset_index()
+        order_type_map = (
+            _gdf[_gdf["order"].notna() & (_gdf["order"] != "OB")]
+            .drop_duplicates("order").set_index("order")["line_item_type"].to_dict()
         )
-
-    if frames:
-        orders_df = pd.concat(frames, ignore_index=True)
         orders_df["Bucket"] = orders_df["line_item_type"].map(recon.GAM_GROUP).fillna("—")
-        excl_cur = {(s, o) for s, o in st.session_state.excl_set}
+        excl_cur = set(st.session_state.excl_set)
         orders_df["Status"] = [
-            "🚫 Excluded" if (s, o) in excl_cur
-            else ("🔄 Reclassified" if f"{s}||{o}" in st.session_state.reassignments else "")
-            for s, o in zip(orders_df["site"], orders_df["order"])
+            "🚫 Excluded" if o in excl_cur
+            else ("🔄 Reclassified" if o in st.session_state.reassignments else "")
+            for o in orders_df["order"]
         ]
         metric_cols = [m for m in recon.METRICS if m in orders_df.columns]
         sort_metric = metric_cols[0] if metric_cols else "order"
         orders_df = orders_df.sort_values(["Bucket", sort_metric], ascending=[True, False]).reset_index(drop=True)
 
         grid_df = orders_df.rename(columns={
-            "site": "Site", "order": "Order", "line_item_type": "Type",
+            "order": "Order", "line_item_type": "Type",
             **{m: recon.METRICS[m][2] for m in metric_cols},
-        })[["Site", "Order", "Type", "Bucket", *[recon.METRICS[m][2] for m in metric_cols], "Status"]]
+        })[["Order", "Type", "Bucket", *[recon.METRICS[m][2] for m in metric_cols], "Status"]]
 
         ca, cb, cc = st.columns([2, 3, 1])
         with ca:
@@ -751,7 +757,6 @@ if order_pairs:
         gb.configure_column("Order", min_width=280, flex=4, floatingFilter=True,
                             filterParams={"filterOptions": ["contains"], "defaultOption": "contains",
                                           "suppressAndOrCondition": True})
-        gb.configure_column("Site", min_width=120, flex=1)
         for m in metric_cols:
             label, kind = recon.METRICS[m][2], recon.METRICS[m][3]
             fmt = ("'$' + Number(value).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})"
@@ -773,25 +778,24 @@ if order_pairs:
 
         _sel_raw = response.get("selected_rows")
         if isinstance(_sel_raw, pd.DataFrame):
-            _current_sel = list(zip(_sel_raw["Site"], _sel_raw["Order"])) if not _sel_raw.empty else []
+            _current_sel = _sel_raw["Order"].tolist() if not _sel_raw.empty else []
         elif _sel_raw:
-            _current_sel = [(r["Site"], r["Order"]) for r in _sel_raw]
+            _current_sel = [r["Order"] for r in _sel_raw]
         else:
             _current_sel = []
         if not save_clicked:
-            st.session_state._order_sel = [list(t) for t in _current_sel]
+            st.session_state._order_sel = _current_sel
 
         if save_clicked:
-            sel = _current_sel or [tuple(t) for t in st.session_state._order_sel]
+            sel = _current_sel or st.session_state._order_sel
             if sel:
-                names = ", ".join(o for _, o in sel[:3]) + (f" +{len(sel) - 3} more" if len(sel) > 3 else "")
+                names = ", ".join(sel[:3]) + (f" +{len(sel) - 3} more" if len(sel) > 3 else "")
                 if action_choice == "Exclude":
-                    merged = {tuple(t) for t in st.session_state.excl_set} | set(sel)
-                    st.session_state.excl_set = [list(t) for t in merged]
+                    st.session_state.excl_set = sorted(set(st.session_state.excl_set) | set(sel))
                     st.session_state.last_save_msg = f"✅ Excluded {len(sel)} order(s): {names}"
                 else:
-                    for s, o in sel:
-                        st.session_state.reassignments[f"{s}||{o}"] = reclass_to
+                    for o in sel:
+                        st.session_state.reassignments[o] = reclass_to
                     st.session_state.last_save_msg = f"✅ Reclassified {len(sel)} order(s) → {reclass_to}: {names}"
                 st.session_state.grid_version += 1
                 st.rerun()
@@ -804,17 +808,16 @@ if order_pairs:
         if n_excl + n_rc:
             with st.expander(f"Review & undo changes ({n_excl + n_rc} total)", expanded=False):
                 undo_excl, undo_rc = [], []
-                for s, o in st.session_state.excl_set:
+                for o in st.session_state.excl_set:
                     c1, c2 = st.columns([9, 1])
-                    c1.markdown(f"🚫 {s} — {o}")
-                    if c2.button("Undo", key=f"undo_e_{s}_{o}"):
-                        undo_excl.append([s, o])
-                for key_, new_t in list(st.session_state.reassignments.items()):
-                    s, o = key_.split("||", 1)
+                    c1.markdown(f"🚫 {o}")
+                    if c2.button("Undo", key=f"undo_e_{o}"):
+                        undo_excl.append(o)
+                for o, new_t in list(st.session_state.reassignments.items()):
                     c1, c2 = st.columns([9, 1])
-                    c1.markdown(f"🔄 {s} — {o}: {order_type_map.get(o, '?')} → **{new_t}**")
-                    if c2.button("Undo", key=f"undo_r_{key_}"):
-                        undo_rc.append(key_)
+                    c1.markdown(f"🔄 {o}: {order_type_map.get(o, '?')} → **{new_t}**")
+                    if c2.button("Undo", key=f"undo_r_{o}"):
+                        undo_rc.append(o)
                 st.divider()
                 if st.button("🗑 Clear ALL changes", key="clear_all"):
                     st.session_state.excl_set = []
@@ -823,43 +826,29 @@ if order_pairs:
                     st.session_state.grid_version += 1
                     st.rerun()
                 if undo_excl:
-                    st.session_state.excl_set = [t for t in st.session_state.excl_set if t not in undo_excl]
+                    st.session_state.excl_set = [o for o in st.session_state.excl_set if o not in undo_excl]
                     st.session_state.grid_version += 1
                     st.rerun()
                 if undo_rc:
-                    for key_ in undo_rc:
-                        del st.session_state.reassignments[key_]
+                    for o in undo_rc:
+                        del st.session_state.reassignments[o]
                     st.session_state.grid_version += 1
                     st.rerun()
 
 
-def apply_order_changes(pairs_in):
-    """Order exclusions/reclassifications → new SitePairs (source data untouched)."""
-    excl = {tuple(t) for t in st.session_state.excl_set}
+def apply_order_changes(gam_in: recon.Report) -> recon.Report:
+    """Order exclusions/reclassifications → new GAM Report (source untouched)."""
+    excl = set(st.session_state.excl_set)
     reass = st.session_state.reassignments
-    if not excl and not reass:
-        return pairs_in
-    out = []
-    for p in pairs_in:
-        df = p.gam.df
-        if "order" not in df.columns:
-            out.append(p)
-            continue
-        df = df.copy()
-        for key_, new_t in reass.items():
-            s, o = key_.split("||", 1)
-            if s == p.name:
-                df.loc[df["order"] == o, "line_item_type"] = new_t
-        df["source_group"] = df["line_item_type"].map(recon.GAM_GROUP)
-        drop = {o for s, o in excl if s == p.name}
-        if drop:
-            df = df[~df["order"].isin(drop)]
-        out.append(recon.SitePair(
-            p.name,
-            recon.Report("gam", df, p.gam.metrics, p.gam.dims, p.gam.warnings),
-            p.rill,
-        ))
-    return out
+    if "order" not in gam_in.df.columns or not (excl or reass):
+        return gam_in
+    df = gam_in.df.copy()
+    for o, new_t in reass.items():
+        df.loc[df["order"] == o, "line_item_type"] = new_t
+    df["source_group"] = df["line_item_type"].map(recon.GAM_GROUP)
+    if excl:
+        df = df[~df["order"].isin(excl)]
+    return recon.Report("gam", df, gam_in.metrics, gam_in.dims, gam_in.warnings)
 
 
 # ── WAIT FOR RUN ──────────────────────────────────────────────────────────────
@@ -870,9 +859,9 @@ if not st.session_state.report_ready:
 
 # ── BUILD & RENDER ────────────────────────────────────────────────────────────
 
-pairs_eff = apply_order_changes(pairs)
-all_tables = recon.build_tables(pairs_eff)
-class_df = recon.classification_summary(pairs_eff)
+gam_eff = apply_order_changes(gam_rep)
+all_tables = recon.build_tables(gam_eff, rill_rep)
+class_df = recon.classification_summary(gam_eff, rill_rep)
 
 render_exec_summary(all_tables, class_df)
 

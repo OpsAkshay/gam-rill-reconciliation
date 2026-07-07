@@ -18,9 +18,17 @@ Rill ("holistic_revenue_...csv")
     Metrics vary: "Total Opportunities" and/or "Total Impressions"/"Revenue".
     Optional dims: "Ts (day)", "Revenue Source Type", "Domain".
 
-A "site" is never inferred from paths — each GAM+Rill pair IS one site,
-named by the user. Within a site the hierarchy is:
-    property (classified top-level unit) → section → slot.
+The workflow is two files: one GAM export + one Rill export, each possibly
+covering many sites. Site identification is automatic:
+
+    1. Rill's Domain column is authoritative — each top-level ad unit is
+       assigned the domain Rill reports it under.
+    2. GAM-only units fall back to evidence in the GAM file itself:
+       domain-like unit codes, brand prefixes in display names
+       ('GB News - Celebrity' → GB News), and shared code-token clusters.
+
+Within a site the hierarchy is: property (classified top-level unit) →
+section → slot.
 """
 
 from __future__ import annotations
@@ -70,6 +78,7 @@ RILL_GROUP = {
 }
 
 OTHERS_LABEL = "Others"
+UNATTRIBUTED = "(unattributed)"
 
 
 # ── READING ───────────────────────────────────────────────────────────────────
@@ -175,9 +184,9 @@ def strip_brand_prefix(displays: pd.Series) -> dict:
     removed, e.g. 'GB News - Celebrity' → 'Celebrity'.
 
     The brand is detected, not hardcoded: the most common leading token
-    (before ' - ') across the site's level-1 units. Only stripped when it
-    covers ≥ half the units, so publishers that don't prefix (WeatherBug)
-    pass through untouched.
+    (before ' - ') across the level-1 units. Only stripped when it covers
+    ≥ half the units, so publishers that don't prefix (WeatherBug) pass
+    through untouched.
     """
     displays = displays.dropna().astype(str)
     if displays.empty:
@@ -305,13 +314,12 @@ def parse_rill(data: bytes) -> Report:
     return Report("rill", df, metrics, dims, warnings)
 
 
-# ── FILE-KIND DETECTION & AUTO-PAIRING ────────────────────────────────────────
-
 def parse_any(data: bytes) -> Report:
     """Identify a file as GAM or Rill from its columns and parse it.
 
     GAM exports carry 'Ad unit (all levels)' / 'Ad unit code level N';
-    Rill exports carry a single 'Ad Unit' path column. The two never overlap.
+    Rill exports carry a single 'Ad Unit' path column. The two never overlap,
+    so the user can drop the files in either slot.
     """
     df = read_csv_any(data)
     if gam_level_columns(df.columns) or "Ad unit (all levels)" in df.columns:
@@ -325,99 +333,125 @@ def parse_any(data: bytes) -> Report:
     )
 
 
-def derive_site_name(gam: Report, fallback: str) -> str:
-    """Site name from the GAM data itself.
+def common_metrics(gam: Report, rill: Report) -> list:
+    return [m for m in METRICS if m in gam.metrics and m in rill.metrics]
 
-    1. A domain-like top-level unit (contains '.') names the site —
-       WeatherBug's tree has 'weatherbug.com'.
-    2. Else the dominant brand prefix of the unit display names —
-       'GB News - Celebrity', 'GB News - Money', … → 'GB News'.
-    3. Else the uploaded file name.
+
+def common_dims(gam: Report, rill: Report) -> set:
+    return gam.dims & rill.dims
+
+
+# ── SITE IDENTIFICATION ───────────────────────────────────────────────────────
+
+def _norm(s) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(s).lower())
+
+
+def normalize_domain(d) -> str:
+    s = str(d).strip().lower()
+    return s[4:] if s.startswith("www.") else s
+
+
+def _site_root(site: str) -> str:
+    """'gbnews.com' → 'gbnews'; non-domain names just normalize."""
+    return _norm(site.split(".")[0]) if "." in site else _norm(site)
+
+
+def build_site_map(gam: Report, rill: Report) -> dict:
+    """Top-level ad-unit code → site name, learned from the data.
+
+    Priority of evidence:
+      1. Rill's Domain column — the authoritative unit→site mapping for
+         every unit Rill reports.
+      2. Domain-like GAM unit codes (weatherbug.com) are sites themselves.
+      3. Brand prefix in the unit display name ('GB News - Celebrity' →
+         'GB News'), linked to an already-known site when the names agree
+         (brand 'GB News' ↔ domain gbnews.com).
+      4. Leftovers attach to a known brand/site their code starts with
+         (GBNews_Video → GB News); otherwise units sharing a leading code
+         token cluster together (Primis_Video_* → 'Primis').
     """
-    units = gam.df[["unit_code", "unit_display"]].query("unit_code != ''")
-    if units.empty:
-        return fallback
-    domainish = units.loc[units["unit_code"].str.contains(r"\.", regex=True), "unit_code"]
-    if not domainish.empty:
-        return domainish.value_counts().index[0]
-    displays = units.drop_duplicates("unit_code")["unit_display"].astype(str)
-    leading = displays.str.split(" - ").str[0].str.strip()
-    top = leading.value_counts()
-    if not top.empty and top.iloc[0] >= len(displays) / 2:
-        return top.index[0]
-    return fallback
+    site_map: dict = {}
 
+    # 1. Rill Domain (majority vote per unit, in case of stray rows)
+    if "domain" in rill.df.columns:
+        m = rill.df[
+            ~rill.df["is_others"]
+            & rill.df["domain"].notna()
+            & (rill.df["unit_code"] != "")
+        ]
+        if not m.empty:
+            mode = m.groupby("unit_code")["domain"].agg(
+                lambda s: s.value_counts().index[0]
+            )
+            site_map.update({u: normalize_domain(d) for u, d in mode.items()})
 
-def auto_pair(gam_files: list, rill_files: list) -> tuple:
-    """Pair GAM and Rill files by ad-unit path overlap (greedy, best first).
-
-    Args are lists of (filename, Report). Returns (pairs, notes) where notes
-    flag anything that could not be paired confidently.
-    """
-    gam_paths = {
-        i: set(rep.df["key_path"]) - {""}
-        for i, (_, rep) in enumerate(gam_files)
-    }
-    rill_paths = {
-        j: set(rep.df.loc[~rep.df["is_others"], "key_path"]) - {""}
-        for j, (_, rep) in enumerate(rill_files)
-    }
-
-    candidates = sorted(
-        (
-            (len(gam_paths[i] & rill_paths[j]), i, j)
-            for i in gam_paths for j in rill_paths
-        ),
-        key=lambda t: -t[0],
+    units = (
+        gam.df[["unit_code", "unit_display"]]
+        .query("unit_code != ''")
+        .drop_duplicates("unit_code")
     )
-    used_g, used_r, pairs, notes, seen_names = set(), set(), [], [], set()
-    for overlap, i, j in candidates:
-        if overlap == 0 or i in used_g or j in used_r:
-            continue
-        used_g.add(i)
-        used_r.add(j)
-        gam_fn, gam_rep = gam_files[i]
-        rill_fn, rill_rep = rill_files[j]
-        name = derive_site_name(gam_rep, fallback=gam_fn.rsplit(".", 1)[0])
-        n, base = 2, name
-        while name in seen_names:
-            name = f"{base} ({n})"
-            n += 1
-        seen_names.add(name)
-        pairs.append((SitePair(name, gam_rep, rill_rep), gam_fn, rill_fn,
-                      overlap, len(rill_paths[j])))
+    todo = [t for t in units.itertuples(index=False) if t.unit_code not in site_map]
 
-    for i, (fn, _) in enumerate(gam_files):
-        if i not in used_g:
-            notes.append(f"GAM file **{fn}** matches no uploaded Rill file — not included.")
-    for j, (fn, _) in enumerate(rill_files):
-        if j not in used_r:
-            notes.append(f"Rill file **{fn}** matches no uploaded GAM file — not included.")
-    return pairs, notes
+    # 2. Domain-like codes
+    rest = []
+    for t in todo:
+        if "." in t.unit_code:
+            site_map[t.unit_code] = normalize_domain(t.unit_code)
+        else:
+            rest.append(t)
+
+    # 3. Brand prefixes, merged with known sites when names agree
+    known = set(site_map.values())
+    brands: dict = {}
+    rest2 = []
+    for t in rest:
+        disp = str(t.unit_display)
+        if " - " in disp:
+            brand = disp.split(" - ")[0].strip()
+            nb = _norm(brand)
+            site = next(
+                (s for s in known if _site_root(s) == nb
+                 or (nb and nb in _site_root(s))
+                 or (_site_root(s) and _site_root(s) in nb)),
+                brand,
+            )
+            site_map[t.unit_code] = site
+            brands[nb] = site
+        else:
+            rest2.append(t)
+
+    # 4. Leftovers: code-prefix containment, else leading-token clusters.
+    #    Group by the lowercased code token, but label the cluster with the
+    #    display name's casing ('WB', not 'wb').
+    known = set(site_map.values())
+    token_counts: dict = {}
+    token_label: dict = {}
+    for t in rest2:
+        tl = re.split(r"[_\-.]", str(t.unit_code))[0].lower()
+        token_counts[tl] = token_counts.get(tl, 0) + 1
+        token_label.setdefault(tl, re.split(r"[_\-.]", str(t.unit_display))[0])
+    for t in rest2:
+        n = _norm(t.unit_code)
+        hit = next((site for b, site in brands.items() if b and n.startswith(b)), None)
+        if hit is None:
+            hit = next((s for s in known if _site_root(s) and n.startswith(_site_root(s))), None)
+        if hit is None:
+            tl = re.split(r"[_\-.]", str(t.unit_code))[0].lower()
+            # A leading token only names a cluster if ≥2 units share it;
+            # singletons keep their readable display name.
+            hit = token_label[tl] if token_counts.get(tl, 0) >= 2 else str(t.unit_display)
+        site_map[t.unit_code] = hit
+    return site_map
 
 
-# ── SITE PAIR ─────────────────────────────────────────────────────────────────
+# ── UNIT META / SECTION EXTRACTION ────────────────────────────────────────────
 
-@dataclass
-class SitePair:
-    name: str
-    gam: Report
-    rill: Report
-
-    @property
-    def metrics(self) -> list:
-        return [m for m in METRICS if m in self.gam.metrics and m in self.rill.metrics]
-
-    @property
-    def dims(self) -> set:
-        return self.gam.dims & self.rill.dims
-
-
-def build_unit_meta(pair: SitePair) -> pd.DataFrame:
+def build_unit_meta(gam: Report) -> pd.DataFrame:
     """Per top-level unit: property class + brand-stripped display name.
     Derived from GAM (it lists the whole tree); Rill rows reuse it by code."""
     units = (
-        pair.gam.df[["unit_code", "unit_display"]]
+        gam.df[["unit_code", "unit_display"]]
         .query("unit_code != ''")
         .drop_duplicates("unit_code")
         .copy()
@@ -439,32 +473,40 @@ def _sectionize(key_path: str, unit_meta: pd.DataFrame) -> tuple:
     """
     parts = key_path.split("/") if key_path else []
     if not parts or parts == [""]:
-        return ("(unattributed)", "(unattributed)", OTHERS_LABEL)
+        return (UNATTRIBUTED, UNATTRIBUTED, OTHERS_LABEL)
     unit = parts[0]
     meta = unit_meta.loc[unit] if unit in unit_meta.index else None
     prop = meta["property"] if meta is not None else "Web"
     unit_disp = meta["unit_display"] if meta is not None else unit
     if len(parts) >= 3:
         section = "/".join(parts[1:-1])
-    elif len(parts) == 2:
-        section = unit_disp
     else:
         section = unit_disp
     slot = parts[-1]
     return (prop, section, slot)
 
 
-def enrich(pair: SitePair) -> tuple:
-    """Return (gam_df, rill_df) with unified site/property/section/slot columns."""
-    unit_meta = build_unit_meta(pair)
+def enrich(gam: Report, rill: Report) -> tuple:
+    """Return (gam_df, rill_df) with unified site/property/section/slot columns.
+
+    Site assignment: GAM rows through the learned site map; Rill rows through
+    the same map, falling back to their own Domain (this is how 'Others' rows
+    still land on the right site when Domain is present)."""
+    site_map = build_site_map(gam, rill)
+    unit_meta = build_unit_meta(gam)
     out = []
-    for rep in (pair.gam, pair.rill):
+    for rep in (gam, rill):
         df = rep.df.copy()
         trio = df["key_path"].map(lambda p: _sectionize(p, unit_meta))
         df["property"] = trio.str[0]
         df["section"] = trio.str[1]
         df["slot"] = trio.str[2]
-        df["site"] = pair.name
+        domains = df["domain"] if "domain" in df.columns else pd.Series(np.nan, index=df.index)
+        df["site"] = [
+            site_map.get(u) if site_map.get(u)
+            else (normalize_domain(d) if pd.notna(d) else UNATTRIBUTED)
+            for u, d in zip(df["unit_code"], domains)
+        ]
         out.append(df)
     return tuple(out)
 
@@ -502,62 +544,48 @@ def _agg(df: pd.DataFrame, keys: list, metrics: list, prefix: str) -> pd.DataFra
     )
 
 
-def build_tables(pairs: list) -> dict:
-    """All report tables for a list of SitePairs.
+def build_tables(gam: Report, rill: Report) -> dict:
+    """All report tables for one GAM + one Rill export (any number of sites).
 
     Matching philosophy: totals are compared per site honestly (full GAM vs
     full Rill including 'Others'); drill-down levels compare matched paths
     only, with the residue quantified in dedicated unmatched tables rather
     than silently inflating per-row discrepancies.
     """
-    frames_g, frames_r = [], []
-    metrics_by_site, dims_common = {}, None
-    for pair in pairs:
-        g, r = enrich(pair)
-        frames_g.append(g)
-        frames_r.append(r)
-        metrics_by_site[pair.name] = pair.metrics
-        dims_common = pair.dims if dims_common is None else dims_common & pair.dims
+    metrics = common_metrics(gam, rill)
+    dims = common_dims(gam, rill)
+    gam_all, rill_all = enrich(gam, rill)
 
-    gam_all = pd.concat(frames_g, ignore_index=True)
-    rill_all = pd.concat(frames_r, ignore_index=True)
-    metrics = sorted(
-        {m for ms in metrics_by_site.values() for m in ms},
-        key=list(METRICS).index,
-    )
-    dims_common = dims_common or set()
-
-    gam_paths = gam_all.groupby("site")["key_path"].agg(set).to_dict()
-    rill_all["matched"] = [
-        (kp != "") and (kp in gam_paths.get(site, set()))
-        for site, kp in zip(rill_all["site"], rill_all["key_path"])
-    ]
-    rill_matched_paths = (
-        rill_all[rill_all["matched"]].groupby("site")["key_path"].agg(set).to_dict()
-    )
-    gam_all["matched"] = [
-        kp in rill_matched_paths.get(site, set())
-        for site, kp in zip(gam_all["site"], gam_all["key_path"])
-    ]
+    gam_paths = set(gam_all["key_path"]) - {""}
+    rill_all["matched"] = rill_all["key_path"].isin(gam_paths) & (rill_all["key_path"] != "")
+    rill_matched_paths = set(rill_all.loc[rill_all["matched"], "key_path"])
+    gam_all["matched"] = gam_all["key_path"].isin(rill_matched_paths)
     gam_m, rill_m = gam_all[gam_all["matched"]], rill_all[rill_all["matched"]]
 
     tables = {}
 
     # Site overview: full totals AND matched-only compare, side by side.
-    g_tot = _agg(gam_all, ["site"], metrics, "GAM")
-    r_tot = _agg(rill_all, ["site"], metrics, "Rill")
-    overview = build_disc(g_tot, r_tot, ["site"], metrics, sort_by=["site"])
-    gm_tot = _agg(gam_m, ["site"], metrics, "GAM") if not gam_m.empty else g_tot.iloc[0:0]
-    rm_tot = _agg(rill_m, ["site"], metrics, "Rill") if not rill_m.empty else r_tot.iloc[0:0]
-    matched_ov = build_disc(gm_tot, rm_tot, ["site"], metrics, sort_by=["site"])
-    tables["overview"] = overview
-    tables["overview_matched"] = matched_ov
+    tables["overview"] = build_disc(
+        _agg(gam_all, ["site"], metrics, "GAM"),
+        _agg(rill_all, ["site"], metrics, "Rill"),
+        ["site"], metrics, sort_by=["site"],
+    )
+    tables["overview_matched"] = build_disc(
+        _agg(gam_m, ["site"], metrics, "GAM") if not gam_m.empty else tables["overview"].iloc[0:0][["site"]],
+        _agg(rill_m, ["site"], metrics, "Rill") if not rill_m.empty else tables["overview"].iloc[0:0][["site"]],
+        ["site"], metrics, sort_by=["site"],
+    ) if not (gam_m.empty and rill_m.empty) else pd.DataFrame(columns=tables["overview"].columns)
 
-    if "date" in dims_common:
+    if "date" in dims:
         tables["by_date"] = build_disc(
-            _agg(gam_all, ["site", "date"], metrics, "GAM"),
-            _agg(rill_all, ["site", "date"], metrics, "Rill"),
-            ["site", "date"], metrics, sort_by=["site", "date"],
+            _agg(gam_all, ["date"], metrics, "GAM"),
+            _agg(rill_all, ["date"], metrics, "Rill"),
+            ["date"], metrics, sort_by=["date"],
+        )
+        tables["by_date_site"] = build_disc(
+            _agg(gam_all, ["date", "site"], metrics, "GAM"),
+            _agg(rill_all, ["date", "site"], metrics, "Rill"),
+            ["date", "site"], metrics, sort_by=["site", "date"],
         )
 
     tables["by_property"] = build_disc(
@@ -577,7 +605,7 @@ def build_tables(pairs: list) -> dict:
         ["site", "property", "section", "slot", "key_path"], metrics,
     ).sort_values(f"GAM_{metrics[0]}", ascending=False).reset_index(drop=True)
 
-    if "source_group" in dims_common:
+    if "source_group" in dims:
         gam_sg = gam_all[gam_all["source_group"].notna()]
         rill_sg = rill_all[rill_all["source_group"].notna()]
         tables["by_source_group"] = build_disc(
@@ -609,8 +637,8 @@ def coverage_summary(tables: dict, metrics: list) -> pd.DataFrame:
     rows = []
     for _, r in ov.iterrows():
         site = r["site"]
-        mrow = mv[mv["site"] == site]
-        mrow = mrow.iloc[0] if not mrow.empty else None
+        mrow = mv[mv["site"] == site] if not mv.empty else mv
+        mrow = mrow.iloc[0] if len(mrow) else None
         row = {"site": site}
         for m in metrics:
             row[f"{m}_disc"] = mrow[f"{m}_disc"] if mrow is not None else np.nan
@@ -621,21 +649,20 @@ def coverage_summary(tables: dict, metrics: list) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def classification_summary(pairs: list) -> pd.DataFrame:
+def classification_summary(gam: Report, rill: Report) -> pd.DataFrame:
     """Site → property breakdown: units, sections, and whether Rill covers it."""
+    g, r = enrich(gam, rill)
+    rill_cov = set(zip(r.loc[~r["is_others"], "site"], r.loc[~r["is_others"], "property"]))
     rows = []
-    for pair in pairs:
-        g, r = enrich(pair)
-        rill_props = set(r.loc[~r["is_others"], "property"].unique())
-        for prop, grp in g.groupby("property"):
-            rows.append({
-                "site": pair.name,
-                "property": prop,
-                "top_level_units": grp["unit_code"].nunique(),
-                "sections": grp["section"].nunique(),
-                "slots": grp["slot"].nunique(),
-                "in_rill": prop in rill_props,
-            })
+    for (site, prop), grp in g.groupby(["site", "property"]):
+        rows.append({
+            "site": site,
+            "property": prop,
+            "top_level_units": grp["unit_code"].nunique(),
+            "sections": grp["section"].nunique(),
+            "slots": grp["slot"].nunique(),
+            "in_rill": (site, prop) in rill_cov,
+        })
     return pd.DataFrame(rows).sort_values(["site", "property"]).reset_index(drop=True)
 
 
