@@ -1,0 +1,7 @@
+# Publisher exports contain real business data — never commit them.
+*.csv
+
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/

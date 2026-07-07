@@ -1,14 +1,15 @@
-import json
-import re
-import zlib
-import base64
-
 # pyrefly: ignore [missing-import]
 import streamlit as st
 import pandas as pd
 import numpy as np
 # pyrefly: ignore [missing-import]
-from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode, JsCode
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
+
+import recon
+from recon import (
+    WARN_PCT, ALERT_PCT, DIM_LABELS,
+    fmt_disc, table_metrics, format_table, encode_tables, decode_tables,
+)
 
 st.set_page_config(
     page_title="GAM × Rill Reconciliation",
@@ -48,7 +49,6 @@ st.markdown(f"""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
-/* ── BASE ─────────────────────────────────────────────────────────────────── */
 html, body, [class*="css"] {{
     font-family: 'Inter', 'Segoe UI', sans-serif;
 }}
@@ -58,8 +58,6 @@ html, body, [class*="css"] {{
 }}
 
 /* ── NEON AMBIENT GLOW ────────────────────────────────────────────────────── */
-/* html::before at z-index:-1 sits BEHIND everything.                         */
-/* .stApp / .main / .block-container are transparent so the neon shows through */
 html::before {{
     content: '';
     position: fixed;
@@ -78,10 +76,8 @@ html::before {{
 }}
 
 /* ── APP BACKGROUND ───────────────────────────────────────────────────────── */
-/* body must be transparent — white body background would cover html::before  */
 html {{ background: {BG}; }}
 body {{ background: transparent; }}
-/* Transparent so html::before neon shows through */
 .stApp,
 [data-testid="stAppViewContainer"],
 .main {{
@@ -159,8 +155,9 @@ a {{ color: {ACCENT} !important; }}
     background: {ACCENT_BG} !important;
 }}
 
-/* ── INPUTS (general) ─────────────────────────────────────────────────────── */
-[data-testid="stTextInput"] input {{
+/* ── INPUTS ───────────────────────────────────────────────────────────────── */
+[data-testid="stTextInput"] input,
+[data-testid="stNumberInput"] input {{
     background: {SURFACE} !important;
     color: {TEXT} !important;
     border: 1.5px solid {BORDER} !important;
@@ -168,12 +165,12 @@ a {{ color: {ACCENT} !important; }}
     font-size: 0.9rem;
     height: 2.5rem;
 }}
-[data-testid="stTextInput"] input:focus {{
+[data-testid="stTextInput"] input:focus,
+[data-testid="stNumberInput"] input:focus {{
     border-color: {ACCENT} !important;
     box-shadow: 0 0 0 3px {ACCENT_RING} !important;
 }}
 [data-testid="stTextInput"] input::placeholder {{ color: {MUTED} !important; }}
-
 
 /* ── SELECT / MULTISELECT ─────────────────────────────────────────────────── */
 [data-testid="stSelectbox"] > div > div,
@@ -299,17 +296,16 @@ hr {{ border-color: {BORDER} !important; margin: 1.2rem 0; }}
     font-weight: 600; font-size: 0.9rem;
 }}
 
-.action-panel {{
+.format-badge {{
+    display: inline-block;
     background: {ACCENT_BG};
-    border: 1.5px solid {ACCENT_RING};
-    border-radius: 12px;
-    padding: 1rem 1.3rem;
-    margin-bottom: 0.8rem;
-}}
-
-.search-box-wrap {{
-    position: relative;
-    margin-bottom: 0.5rem;
+    border: 1px solid {ACCENT_RING};
+    border-radius: 6px;
+    padding: 0.15rem 0.55rem;
+    margin: 0.1rem 0.2rem 0.1rem 0;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: {ACCENT};
 }}
 
 /* ── AG GRID DARK MODE ────────────────────────────────────────────────────── */
@@ -333,260 +329,62 @@ hr {{ border-color: {BORDER} !important; margin: 1.2rem 0; }}
 .ag-theme-streamlit .ag-paging-panel {{ color: {MUTED} !important; background: {SURFACE} !important; }}
 .ag-theme-streamlit .ag-root-wrapper {{ border-radius: 10px; overflow: hidden; border: 1px solid {BORDER} !important; }}
 
-/* ── HIDE "Press Enter to apply" STREAMLIT HINT ──────────────────────────── */
 [data-testid="InputInstructions"] {{ display: none !important; }}
-
 </style>
 """, unsafe_allow_html=True)
 
-_neon_grad_end = "#1e3a5f" if dm else "#dbeafe"
-
 # ── CONSTANTS ─────────────────────────────────────────────────────────────────
 
-GAM_REQUIRED = [
-    "Date", "Line item type", "Order",
-    "Ad unit (all levels)", "Ad unit code",
-    "Total impressions", "Total CPM and CPC revenue",
-]
-RILL_REQUIRED = [
-    "Ts (day)", "Domain", "Revenue Source Type",
-    "Ad Unit", "Total Impressions", "Revenue",
-]
-GAM_GROUP = {
-    "Price priority": "Pre-bid / Price Priority",
-    "Ad Exchange":    "ADX + OB",
-    "OB":             "ADX + OB",
-    "AMAZON":         "Amazon",
-    "House":          "House",
-    "Standard":       "Standard",
+MAX_SITES = 6
+URL_WARN_BYTES = 8000
+
+# key → (icon, title, subtitle, on-by-default)
+LEVELS = {
+    "overview":         ("📊", "Level 1 — Site Overview (full totals)",   "everything in both files, incl. unmatched", True),
+    "overview_matched": ("🔗", "Level 1b — Site Overview (matched only)", "paths present on both sides",                True),
+    "by_date":          ("📅", "Level 2 — By Date",                        "",                                          True),
+    "by_property":      ("🖥️", "Level 3 — Site × Property",               "matched paths",                              True),
+    "by_section":       ("🗂️", "Level 4 — Site × Property × Section",     "matched paths",                              True),
+    "by_source_group":  ("🏷️", "Level 5 — By Source Group",               "",                                          True),
+    "by_adunit":        ("📦", "Level 6 — By Ad Unit",                     "matched · sorted by GAM volume",             True),
 }
-RILL_GROUP = {
-    "Prebid":         "Pre-bid / Price Priority",
-    "Price Priority": "Pre-bid / Price Priority",
-    "OB-ADX":         "ADX + OB",
-    "ADX":            "ADX + OB",
-    "OB":             "ADX + OB",
-    "Amazon":         "Amazon",
-    "House":          "House",
-    "Standard":       "Standard",
-}
-WARN_PCT  = 5.0
-ALERT_PCT = 10.0
-ALL_LEVELS = [
-    "Level 1 — Overall by Date",
-    "Level 2 — By Date × Site",
-    "Level 3 — By Source Group",
-    "Level 3b — Source Group × Site",
-    "Level 3c — Source Group × Site × Date",
-    "Level 4 — By Ad Unit",
-]
-LEVEL_DEFAULTS = {
-    "Level 1 — Overall by Date":             True,
-    "Level 2 — By Date × Site":              True,
-    "Level 3 — By Source Group":             True,
-    "Level 3b — Source Group × Site":        False,
-    "Level 3c — Source Group × Site × Date": False,
-    "Level 4 — By Ad Unit":                  True,
-}
-RECLASSIFY_TARGETS = [
-    "AMAZON", "Price priority", "Ad Exchange", "House", "Standard", "OB",
-]
+RECLASSIFY_TARGETS = ["AMAZON", "Price priority", "Ad Exchange", "House", "Standard", "OB"]
 
-# ── URL ENCODE / DECODE ───────────────────────────────────────────────────────
+# ── CACHED PARSERS ────────────────────────────────────────────────────────────
 
-def encode_tables(tables: dict, meta: dict) -> str:
-    payload = {"meta": meta, "tables": {}}
-    for name, df in tables.items():
-        d = df.copy()
-        if "Date" in d.columns:
-            d["Date"] = d["Date"].astype(str)
-        for col in d.select_dtypes(include=[float]).columns:
-            d[col] = d[col].round(4)
-        payload["tables"][name] = {"columns": list(d.columns), "data": d.values.tolist()}
-    raw = json.dumps(payload, separators=(",", ":"))
-    compressed = zlib.compress(raw.encode("utf-8"), level=9)
-    return base64.urlsafe_b64encode(compressed).decode()
+@st.cache_data(show_spinner=False)
+def parse_gam_cached(data: bytes):
+    return recon.parse_gam(data)
 
 
-def decode_tables(encoded: str):
-    compressed = base64.urlsafe_b64decode(encoded.encode())
-    raw = zlib.decompress(compressed).decode("utf-8")
-    payload = json.loads(raw)
-    tables = {
-        name: pd.DataFrame(v["data"], columns=v["columns"])
-        for name, v in payload["tables"].items()
-    }
-    return tables, payload.get("meta", {})
+@st.cache_data(show_spinner=False)
+def parse_rill_cached(data: bytes):
+    return recon.parse_rill(data)
 
 
-# ── HELPERS ───────────────────────────────────────────────────────────────────
+# ── RENDER HELPERS ────────────────────────────────────────────────────────────
 
-def clean_gam(df):
-    df = df.copy()
-    blank = df["Line item type"].isna() & df["Order"].isna()
-    df.loc[blank, "Line item type"] = "OB"
-    df.loc[blank, "Order"] = "OB"
-    is_amazon = (
-        df["Order"].str.contains(r"Amazon|APS|TAM", case=False, na=False)
-        & (df["Line item type"] == "Price priority")
-    )
-    df.loc[is_amazon, "Line item type"] = "AMAZON"
-    return df
+def render_table(df: pd.DataFrame, flag_max=True):
+    if df is None or df.empty:
+        st.caption("No rows.")
+        return
+    metrics = table_metrics(df)
+    st.dataframe(format_table(df), use_container_width=True, hide_index=True)
 
-
-def site_from_gam(val):
-    """Extract publisher name from GAM ad unit hierarchy.
-
-    Works regardless of publisher conventions — always takes the
-    top-level segment (before the first section separator ' - ', ' / ', etc.)
-    and before the slot separator ('»', '>').
-
-    Examples:
-      'GB News - Celebrity » MPU_1'        → 'GB News'
-      'The Guardian - Politics » Banner'   → 'The Guardian'
-      'DailyMail » LeaderBoard'            → 'DailyMail'
-      'Primis_Video_Android'               → 'Primis_Video_Android'
-    """
-    if pd.isna(val): return ""
-    s = str(val)
-    # Strip slot (everything after the slot separator)
-    for sep in [" Â» ", " » ", " > "]:
-        if sep in s:
-            s = s.split(sep)[0].strip()
-            break
-    # Take publisher (first segment before section separator)
-    for sep in [" - ", " / ", " | "]:
-        if sep in s:
-            return s.split(sep)[0].strip()
-    return s.strip()
-
-
-def gam_level_columns(columns) -> list:
-    """Return the 'Ad unit code level N' column names present, ordered by N.
-
-    GAM exports don't guarantee column order (level 5/6 can appear swapped
-    depending on the account), so levels must be identified by parsing the
-    trailing number in the header, never by position.
-    """
-    numbered = []
-    for col in columns:
-        m = re.fullmatch(r"Ad unit code level (\d+)", str(col).strip())
-        if m:
-            numbered.append((int(m.group(1)), col))
-    numbered.sort(key=lambda x: x[0])
-    return [c for _, c in numbered]
-
-
-def _clean_code(v):
-    """Normalise a single ad-unit code cell to a lowercase string, or None if blank.
-
-    Purely-numeric codes are sometimes read by pandas as floats (e.g.
-    '5926448863.0'); strip the trailing '.0' so they still match the
-    equivalent Rill path segment.
-    """
-    if pd.isna(v):
-        return None
-    s = str(v).strip()
-    if s == "":
-        return None
-    if re.fullmatch(r"-?\d+\.0", s):
-        s = s[:-2]
-    return s.lower()
-
-
-def gam_key_path(row, level_cols: list) -> str:
-    """Build the lowercased '/'-joined ad-unit code path for one GAM row.
-
-    GAM's 'Ad unit code level N' columns are the literal decomposition of
-    the same path Rill encodes as a single slash-delimited string — this is
-    what makes the two sides joinable exactly, without fuzzy name matching,
-    regardless of publisher-specific naming conventions.
-    """
-    parts = [c for c in (_clean_code(row[col]) for col in level_cols) if c is not None]
-    if not parts:
-        leaf = _clean_code(row.get("Ad unit code"))
-        if leaf is not None:
-            parts = [leaf]
-    return "/".join(parts)
-
-
-def rill_key_path(val) -> str:
-    """Build the lowercased '/'-joined ad-unit code path for a Rill 'Ad Unit' cell.
-
-    Rill prefixes the path with a leading id segment ('network,id' or a bare
-    numeric id) that has no GAM equivalent — drop it. Everything after it
-    lines up 1:1, in order, with GAM's level codes. Returns '' for
-    blank/'Others' rows, which Rill itself couldn't attribute to a unit.
-    """
-    if pd.isna(val):
-        return ""
-    s = str(val).strip()
-    if s == "" or s == "Others":
-        return ""
-    s = s.strip("/")
-    parts = s.split("/")
-    if len(parts) <= 1:
-        return ""
-    return "/".join(p.lower() for p in parts[1:])
-
-
-def site_from_domain(domain):
-    if pd.isna(domain): return ""
-    s = str(domain)
-    for tld in [".com", ".org", ".net", ".co.uk", ".io", ".de"]:
-        if s.endswith(tld): return s[:-len(tld)]
-    return s
-
-
-def disc_pct(gam_val, rill_val):
-    return None if gam_val == 0 else (gam_val - rill_val) / gam_val * 100
-
-
-def fmt_pct(v):
-    if v is None or (isinstance(v, float) and np.isnan(v)): return "—"
-    icon = "🔴" if abs(v) >= ALERT_PCT else ("⚠️" if abs(v) >= WARN_PCT else "✅")
-    return f"{icon} {v:+.2f}%"
-
-
-def build_disc(gam_agg, rill_agg, keys, sort_by=None):
-    merged = gam_agg.merge(rill_agg, on=keys, how="outer").fillna(0)
-    merged["IMP_Disc%"] = merged.apply(lambda r: disc_pct(r["GAM_IMP"], r["Rill_IMP"]), axis=1)
-    merged["Rev_Disc%"] = merged.apply(lambda r: disc_pct(r["GAM_Rev"], r["Rill_Rev"]), axis=1)
-    if sort_by: merged = merged.sort_values(sort_by)
-    return merged
-
-
-def render_table(df: pd.DataFrame):
-    disp = df.copy()
-    if "Date" in disp.columns:
-        disp["Date"] = disp["Date"].astype(str)
-    for c in ["GAM_IMP", "Rill_IMP"]:
-        if c in disp.columns:
-            disp[c] = pd.to_numeric(disp[c], errors="coerce").fillna(0).apply(lambda x: f"{int(x):,}")
-    for c in ["GAM_Rev", "Rill_Rev"]:
-        if c in disp.columns:
-            disp[c] = pd.to_numeric(disp[c], errors="coerce").fillna(0).apply(lambda x: f"${x:,.2f}")
-    for c in ["IMP_Disc%", "Rev_Disc%"]:
-        if c in disp.columns:
-            raw = pd.to_numeric(df[c], errors="coerce")
-            disp[c] = raw.apply(fmt_pct)
-    if "site" in disp.columns:
-        disp["site"] = disp["site"].map(lambda x: _pub_display.get(x, x))
-    disp = disp.rename(columns={
-        "GAM_IMP": "GAM Imps", "GAM_Rev": "GAM Rev",
-        "Rill_IMP": "Rill Imps", "Rill_Rev": "Rill Rev",
-        "site": "Site", "source_group": "Source Group", "ad_unit": "Ad Unit",
-    })
-    st.dataframe(disp, use_container_width=True, hide_index=True)
-    raw_disc = pd.to_numeric(df[["IMP_Disc%", "Rev_Disc%"]].stack(), errors="coerce").abs()
-    max_d = raw_disc.max() if not raw_disc.empty else float("nan")
-    if not pd.isna(max_d):
-        if max_d >= ALERT_PCT:
-            st.error(f"🔴 Largest discrepancy: **{max_d:.1f}%** — needs investigation.")
-        elif max_d >= WARN_PCT:
-            st.warning(f"⚠️ Largest discrepancy: **{max_d:.1f}%** — worth reviewing.")
-        else:
-            st.success(f"✅ All discrepancies within {WARN_PCT}% threshold.")
+    if flag_max:
+        disc_cols = [f"{m}_disc" for m in metrics]
+        raw_disc = pd.to_numeric(df[disc_cols].stack(), errors="coerce").abs()
+        max_d = raw_disc.max() if not raw_disc.empty else float("nan")
+        n_rill_only = int((df[disc_cols].isna() & (df[[f"Rill_{m}" for m in metrics]].to_numpy() > 0)).to_numpy().sum())
+        if n_rill_only:
+            st.error(f"🔴 {n_rill_only} cell(s) have Rill volume with zero GAM — investigate mapping.")
+        elif not pd.isna(max_d):
+            if max_d >= ALERT_PCT:
+                st.error(f"🔴 Largest discrepancy: **{max_d:.1f}%** — needs investigation.")
+            elif max_d >= WARN_PCT:
+                st.warning(f"⚠️ Largest discrepancy: **{max_d:.1f}%** — worth reviewing.")
+            else:
+                st.success(f"✅ All discrepancies within {WARN_PCT}% threshold.")
 
 
 def section(icon, title, subtitle=""):
@@ -613,81 +411,97 @@ def date_range_bar(date_range_str, sites):
     """, unsafe_allow_html=True)
 
 
-def render_summary(tables: dict):
-    _section_defs = [
-        ("L1 By Date",        "Overall by Date"),
-        ("L2 Date x Site",    "By Date × Site"),
-        ("L3 Source Group",   "By Source Group"),
-        ("L3b SrcGrp x Site", "Source Group × Site"),
-        ("L3c Full Drill",    "Source Group × Site × Date"),
-        ("L4 Ad Unit",        "By Ad Unit"),
-    ]
-    has_any = False
-    for sheet, label in _section_defs:
-        df = tables.get(sheet)
-        if df is None or df.empty:
-            continue
-        imp = pd.to_numeric(df["IMP_Disc%"], errors="coerce").abs()
-        rev = pd.to_numeric(df["Rev_Disc%"], errors="coerce").abs()
-        issues = df[(imp > ALERT_PCT) | (rev > ALERT_PCT)].copy()
-        if issues.empty:
-            continue
-        has_any = True
-        n = len(issues)
-        st.markdown(
-            f"<div style='font-size:0.95rem;font-weight:600;color:{TEXT};"
-            f"margin:0.8rem 0 0.3rem 0'>"
-            f"🔴 {label} &nbsp;·&nbsp; "
-            f"<span style='color:{ACCENT}'>{n} row{'s' if n>1 else ''} flagged</span>"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-        render_table(issues)
-    if not has_any:
-        st.success(f"✅ No discrepancies exceed {ALERT_PCT:.0f}% in any section.")
+def render_exec_summary(tables: dict, class_df: pd.DataFrame):
+    """The crisp summary: one status line per site + the section classification."""
+    metrics = table_metrics(tables["overview"])
+    cov = recon.coverage_summary(tables, metrics)
+
+    section("🧭", "Summary", "matched-paths comparison · coverage = share of volume the match covers")
+    rows = []
+    for _, r in cov.iterrows():
+        row = {"Site": r["site"]}
+        no_match = r["gam_coverage"] == 0 and r["rill_coverage"] == 0
+        worst = 0.0
+        for m in metrics:
+            d = r[f"{m}_disc"]
+            row[f"{recon.METRICS[m][2]} Δ%"] = "—" if no_match else fmt_disc(d, 1 if pd.isna(d) else 0)
+            if not pd.isna(d):
+                worst = max(worst, abs(d))
+        row["GAM coverage"] = f"{r['gam_coverage']:.1f}%"
+        row["Rill coverage"] = f"{r['rill_coverage']:.1f}%"
+        row["Status"] = "🔴 Investigate" if worst >= ALERT_PCT else ("⚠️ Review" if worst >= WARN_PCT else "✅ OK")
+        rows.append(row)
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    section("🗂️", "Site & Section Classification", "how each site's ad-unit tree was classified")
+    disp = class_df.rename(columns={
+        "site": "Site", "property": "Property", "top_level_units": "Top-level Units",
+        "sections": "Sections", "slots": "Slots", "in_rill": "Tracked in Rill",
+    }).copy()
+    disp["Tracked in Rill"] = disp["Tracked in Rill"].map({True: "✅", False: "—"})
+    st.dataframe(disp, use_container_width=True, hide_index=True)
 
 
 def render_report(tables: dict, show_levels: dict, date_range_str: str, sites: list):
     date_range_bar(date_range_str, sites)
-
-    label_map = {
-        "Level 1 — Overall by Date":             ("📅", "Level 1 — Overall by Date", ""),
-        "Level 2 — By Date × Site":              ("🌐", "Level 2 — By Date × Site", ""),
-        "Level 3 — By Source Group":             ("🏷️",  "Level 3 — By Source Group", "all dates & sites combined"),
-        "Level 3b — Source Group × Site":        ("🏷️",  "Level 3b — Source Group × Site", ""),
-        "Level 3c — Source Group × Site × Date": ("🏷️",  "Level 3c — Source Group × Site × Date", ""),
-        "Level 4 — By Ad Unit":                  ("📦", "Level 4 — By Ad Unit", "top revenue units · GAM ∩ Rill only"),
-    }
-    lvl_to_sheet = {
-        "Level 1 — Overall by Date":             "L1 By Date",
-        "Level 2 — By Date × Site":              "L2 Date x Site",
-        "Level 3 — By Source Group":             "L3 Source Group",
-        "Level 3b — Source Group × Site":        "L3b SrcGrp x Site",
-        "Level 3c — Source Group × Site × Date": "L3c Full Drill",
-        "Level 4 — By Ad Unit":                  "L4 Ad Unit",
-    }
-    for lvl in ALL_LEVELS:
-        sheet = lvl_to_sheet[lvl]
-        if show_levels.get(lvl) and sheet in tables and not tables[sheet].empty:
-            icon, title, sub = label_map[lvl]
+    for key, (icon, title, sub, _) in LEVELS.items():
+        df = tables.get(key)
+        if show_levels.get(key) and df is not None and not df.empty:
             section(icon, title, sub)
-            if lvl == "Level 3 — By Source Group":
+            if key == "by_source_group":
                 st.caption(
                     "**Mapping:** Price priority → Pre-bid / Price Priority  ·  "
                     "Ad Exchange + OB → ADX + OB  ·  AMAZON → Amazon  ·  "
                     "House → House  ·  Standard → Standard"
                 )
-            render_table(tables[sheet])
+            render_table(df)
 
-    # ── Collapsible issue summary (bottom, scoped to active levels) ───────────
-    active_sheets = {
-        lvl_to_sheet[lvl]
-        for lvl in ALL_LEVELS
-        if show_levels.get(lvl) and lvl_to_sheet[lvl] in tables and not tables[lvl_to_sheet[lvl]].empty
-    }
-    active_tables = {k: v for k, v in tables.items() if k in active_sheets}
+    # Residue — quantified, never silently dropped.
+    rill_um, gam_um = tables.get("rill_unmatched"), tables.get("gam_unmatched")
+    if (rill_um is not None and not rill_um.empty) or (gam_um is not None and not gam_um.empty):
+        with st.expander("🧩 Unmatched volume — excluded from matched levels above", expanded=False):
+            if rill_um is not None and not rill_um.empty:
+                st.markdown("**Rill volume with no GAM match** ('Others' = rows Rill itself could not attribute)")
+                d = rill_um.copy().rename(columns=DIM_LABELS)
+                for m in table_metrics_raw(rill_um, "Rill"):
+                    d[f"Rill_{m}"] = d[f"Rill_{m}"].apply(lambda x: f"{int(round(x)):,}") \
+                        if recon.METRICS[m][3] == "int" else d[f"Rill_{m}"].apply(lambda x: f"${x:,.2f}")
+                    d = d.rename(columns={f"Rill_{m}": f"Rill {recon.METRICS[m][2]}"})
+                st.dataframe(d, use_container_width=True, hide_index=True)
+            if gam_um is not None and not gam_um.empty:
+                st.markdown("**GAM-only inventory** (units Rill doesn't report — expected when Rill tracks a subset)")
+                d = gam_um.copy().rename(columns=DIM_LABELS)
+                for m in table_metrics_raw(gam_um, "GAM"):
+                    d[f"GAM_{m}"] = d[f"GAM_{m}"].apply(lambda x: f"{int(round(x)):,}") \
+                        if recon.METRICS[m][3] == "int" else d[f"GAM_{m}"].apply(lambda x: f"${x:,.2f}")
+                    d = d.rename(columns={f"GAM_{m}": f"GAM {recon.METRICS[m][2]}"})
+                st.dataframe(d, use_container_width=True, hide_index=True)
+
+    # Collapsible issue summary (bottom, scoped to active levels)
+    active = {k: tables[k] for k in LEVELS if show_levels.get(k) and k in tables and not tables[k].empty}
     with st.expander(f"🚨 Issue Summary — rows with >{ALERT_PCT:.0f}% discrepancy", expanded=False):
-        render_summary(active_tables)
+        has_any = False
+        for key, df in active.items():
+            metrics = table_metrics(df)
+            disc = df[[f"{m}_disc" for m in metrics]].apply(pd.to_numeric, errors="coerce")
+            rill_only = disc.isna() & (df[[f"Rill_{m}" for m in metrics]].to_numpy() > 0)
+            issues = df[(disc.abs() > ALERT_PCT).any(axis=1) | rill_only.any(axis=1)]
+            if issues.empty:
+                continue
+            has_any = True
+            st.markdown(
+                f"<div style='font-size:0.95rem;font-weight:600;color:{TEXT};margin:0.8rem 0 0.3rem 0'>"
+                f"🔴 {LEVELS[key][1]} &nbsp;·&nbsp; "
+                f"<span style='color:{ACCENT}'>{len(issues)} row{'s' if len(issues) > 1 else ''} flagged</span></div>",
+                unsafe_allow_html=True,
+            )
+            render_table(issues, flag_max=False)
+        if not has_any:
+            st.success(f"✅ No discrepancies exceed {ALERT_PCT:.0f}% in any displayed section.")
+
+
+def table_metrics_raw(df: pd.DataFrame, side: str) -> list:
+    return [m for m in recon.METRICS if f"{side}_{m}" in df.columns]
 
 
 # ── SESSION STATE ─────────────────────────────────────────────────────────────
@@ -695,11 +509,11 @@ def render_report(tables: dict, show_levels: dict, date_range_str: str, sites: l
 _ss_defaults = {
     "report_ready":   False,
     "link_generated": False,
-    "excl_set":       [],
-    "reassignments":  {},
+    "excl_set":       [],     # list of [site, order]
+    "reassignments":  {},     # "site||order" → new type
     "last_save_msg":  "",
-    "grid_version":   0,   # increments on each Save → grid remounts so Status column refreshes
-    "_order_sel":     [],  # last known selection from SELECTION_CHANGED rerun
+    "grid_version":   0,
+    "_order_sel":     [],     # last known [site, order] selection
 }
 for k, v in _ss_defaults.items():
     if k not in st.session_state:
@@ -710,7 +524,7 @@ for k, v in _ss_defaults.items():
 st.markdown("""
 <div class="banner">
   <h1>📊 GAM × Rill Reconciliation</h1>
-  <p>Upload your GAM and Rill exports, review order classifications, then run the discrepancy report.</p>
+  <p>Upload a GAM + Rill export pair per site. Formats are detected automatically — opportunities, impressions and revenue reports all work.</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -728,47 +542,33 @@ if "r" in params:
         """, unsafe_allow_html=True)
         render_report(
             shared_tables,
-            {lvl: True for lvl in ALL_LEVELS},
-            meta.get("date_range", ""),
+            {k: True for k in LEVELS},
+            meta.get("date_range", "—"),
             meta.get("sites", []),
         )
     except Exception as e:
         st.error(f"Could not load shared report. The link may be invalid or corrupted. ({e})")
     st.stop()
 
-# ── SIDEBAR ───────────────────────────────────────────────────────────────────
+# ── SIDEBAR — SITE PAIRS ──────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.markdown("## 📁 Upload Files")
-    with st.expander("GAM — required columns"):
-        st.markdown(
-            "**Dimensions**  \nDate · Line item type · Order  \n"
-            "Ad unit (all levels) · Ad unit code\n\n"
-            "**Metrics**  \nTotal impressions  \nTotal CPM and CPC revenue"
-        )
-    gam_file = st.file_uploader("GAM Export CSV", type="csv", label_visibility="collapsed")
-    if gam_file:
-        st.success(f"✅ {gam_file.name}")
-    else:
-        st.caption("No GAM file uploaded yet.")
+    st.markdown("## 🌐 Sites")
+    st.caption("One GAM + Rill export pair per site. The pair defines the site — paths are never guessed.")
+    n_sites = st.number_input("Number of sites", min_value=1, max_value=MAX_SITES, value=2, step=1)
 
-    st.markdown("")
-
-    with st.expander("Rill — required columns"):
-        st.markdown(
-            "**Dimensions**  \nTs (day) · Domain  \n"
-            "Revenue Source Type · Ad Unit\n\n"
-            "**Metrics**  \nTotal Impressions · Revenue"
-        )
-    rill_file = st.file_uploader("Rill Export CSV", type="csv", label_visibility="collapsed")
-    if rill_file:
-        st.success(f"✅ {rill_file.name}")
-    else:
-        st.caption("No Rill file uploaded yet.")
+    pair_inputs = []
+    for i in range(n_sites):
+        st.markdown(f"**Site {i + 1}**")
+        name = st.text_input("Site name", value="", placeholder="e.g. GB News", key=f"site_name_{i}",
+                             label_visibility="collapsed")
+        gam_file = st.file_uploader(f"GAM export (site {i + 1})", type="csv", key=f"gam_{i}")
+        rill_file = st.file_uploader(f"Rill export (site {i + 1})", type="csv", key=f"rill_{i}")
+        pair_inputs.append((name, gam_file, rill_file))
+        st.markdown("")
 
     st.divider()
 
-    # Dark / Light mode toggle
     dm_label = "☀️  Light mode" if dm else "🌙  Dark mode"
     new_dm = st.toggle(dm_label, value=dm, key="sidebar_dm")
     if new_dm != dm:
@@ -778,10 +578,10 @@ with st.sidebar:
     st.divider()
 
     st.markdown("## 📋 Display Levels")
-    st.caption("Choose which report tables appear on screen.")
+    st.caption("Levels appear only when the uploaded files contain the needed columns.")
     show_levels = {
-        lvl: st.checkbox(lvl, value=LEVEL_DEFAULTS[lvl], key=f"chk_{lvl}")
-        for lvl in ALL_LEVELS
+        key: st.checkbox(title, value=default, key=f"chk_{key}")
+        for key, (_, title, _, default) in LEVELS.items()
     }
 
     st.divider()
@@ -791,423 +591,261 @@ with st.sidebar:
         st.session_state.report_ready = True
         st.session_state.link_generated = False
 
-# ── VALIDATE FILES ────────────────────────────────────────────────────────────
+# ── PARSE & VALIDATE PAIRS ────────────────────────────────────────────────────
 
-if not (gam_file and rill_file):
-    st.info("👈  Upload both CSV files in the sidebar to get started.")
+pairs = []
+problems = []
+for i, (name, gam_file, rill_file) in enumerate(pair_inputs):
+    if not (gam_file and rill_file):
+        continue
+    site_name = name.strip() or f"Site {i + 1}"
+    try:
+        gam_rep = parse_gam_cached(gam_file.getvalue())
+    except ValueError as e:
+        problems.append(f"**{site_name} — GAM file** ({gam_file.name}): {e}")
+        continue
+    try:
+        rill_rep = parse_rill_cached(rill_file.getvalue())
+    except ValueError as e:
+        problems.append(f"**{site_name} — Rill file** ({rill_file.name}): {e}")
+        continue
+    pair = recon.SitePair(site_name, gam_rep, rill_rep)
+    if not pair.metrics:
+        problems.append(
+            f"**{site_name}**: the two files share no comparable metric — "
+            f"GAM has {gam_rep.metrics}, Rill has {rill_rep.metrics}."
+        )
+        continue
+    pairs.append(pair)
+
+for msg in problems:
+    st.error(msg)
+
+if not pairs:
+    st.info("👈  Upload a GAM + Rill CSV pair for at least one site to get started.")
     st.stop()
 
-try:
-    gam_raw  = pd.read_csv(gam_file,  encoding="latin-1")
-    rill_raw = pd.read_csv(rill_file, encoding="utf-8")
-except Exception as e:
-    st.error(f"Could not read files: {e}")
-    st.stop()
+# ── DATA SUMMARY ──────────────────────────────────────────────────────────────
 
-gam_raw.columns  = gam_raw.columns.str.strip()
-rill_raw.columns = rill_raw.columns.str.strip()
-
-missing_g = [c for c in GAM_REQUIRED  if c not in gam_raw.columns]
-missing_r = [c for c in RILL_REQUIRED if c not in rill_raw.columns]
-if missing_g: st.error(f"GAM file missing columns: {missing_g}"); st.stop()
-if missing_r: st.error(f"Rill file missing columns: {missing_r}"); st.stop()
-
-# ── CLEAN GAM ─────────────────────────────────────────────────────────────────
-
-gam = clean_gam(gam_raw)
-gam["Total CPM and CPC revenue"] = (
-    gam["Total CPM and CPC revenue"].astype(str)
-    .str.replace(r"[$,]", "", regex=True)
-    .pipe(pd.to_numeric, errors="coerce").fillna(0)
-)
-gam["Total impressions"] = (
-    gam["Total impressions"].astype(str).str.replace(",", "", regex=False)
-    .pipe(pd.to_numeric, errors="coerce").fillna(0)
-)
-gam["Date"]         = pd.to_datetime(gam["Date"]).dt.date
-
-# Exact ad-unit-level join key: GAM's "Ad unit code level N" columns are the
-# literal decomposition of the path Rill encodes as a single slash-delimited
-# string, so this is the precise join key — not a fuzzy name match.
-_gam_level_cols     = gam_level_columns(gam.columns)
-gam["key_path"]     = gam.apply(lambda r: gam_key_path(r, _gam_level_cols), axis=1)
-_gam_key_parts      = gam["key_path"].str.split("/", n=1)
-gam["site"]         = _gam_key_parts.str[0].fillna("")
-gam["ad_unit"]      = _gam_key_parts.str[1].fillna("")
-gam["source_group"] = gam["Line item type"].map(GAM_GROUP)
-
-# Human-friendly display name per site code, taken straight from GAM's own
-# "Ad unit (all levels)" column, e.g. site code 'gbnews_celebrity' → 'GB News'.
-_site_display_raw = gam["Ad unit (all levels)"].apply(site_from_gam)
-_pub_display = (
-    pd.DataFrame({"site": gam["site"], "display": _site_display_raw})
-    .query("site != ''")
-    .drop_duplicates("site")
-    .set_index("site")["display"].to_dict()
-)
-
-dates = sorted(gam["Date"].unique())
-sites = sorted(_pub_display.get(s, s) for s in sorted(gam["site"].unique()))
-date_fmt       = lambda d: d.strftime("%-d %b %Y")
-date_range_str = date_fmt(dates[0]) if len(dates) == 1 else f"{date_fmt(dates[0])} – {date_fmt(dates[-1])}"
-
-order_type_map = (
-    gam[gam["Order"].notna() & (gam["Order"] != "OB")]
-    .drop_duplicates("Order")
-    .set_index("Order")["Line item type"].to_dict()
-)
-
-# ── SIDEBAR — CHANGES PANEL (added after order_type_map is available) ─────────
-
-with st.sidebar:
-    n_excl_sb = len(st.session_state.excl_set)
-    n_rc_sb   = len(st.session_state.reassignments)
-
-    st.divider()
-    st.markdown("## 📋 Pending Changes")
-
-    if n_excl_sb == 0 and n_rc_sb == 0:
-        st.caption("No changes yet — use the Orders table to exclude or reclassify orders before running analysis.")
-    else:
-        if n_excl_sb:
-            st.markdown(f"**🚫 Excluded ({n_excl_sb})**")
-            for o in st.session_state.excl_set:
-                st.caption(f"• {o}")
-
-        if n_rc_sb:
-            st.markdown(f"**🔄 Reclassified ({n_rc_sb})**")
-            for o, new_t in st.session_state.reassignments.items():
-                orig = order_type_map.get(o, "?")
-                st.caption(f"• {o}  →  {new_t}")
-
-        if st.button("🗑 Clear all", key="sb_clear_all"):
-            st.session_state.excl_set = []
-            st.session_state.reassignments = {}
-            st.session_state.last_save_msg = ""
-            st.session_state.grid_version += 1
-            st.rerun()
-
-# ── PREPARE RILL ──────────────────────────────────────────────────────────────
-
-rill = rill_raw.copy()
-rill["Date"]              = pd.to_datetime(rill["Ts (day)"]).dt.date
-rill["Total Impressions"] = pd.to_numeric(rill["Total Impressions"], errors="coerce").fillna(0)
-rill["Revenue"]           = pd.to_numeric(rill["Revenue"],           errors="coerce").fillna(0)
-rill["source_group"]      = rill["Revenue Source Type"].map(RILL_GROUP)
-
-rill["key_path"]     = rill["Ad Unit"].apply(rill_key_path)
-_rill_key_parts      = rill["key_path"].str.split("/", n=1)
-rill["site_code"]    = _rill_key_parts.str[0].fillna("")
-rill["ad_unit"]      = _rill_key_parts.str[1].fillna("")
-# Rows Rill couldn't attribute to a specific ad unit ('Others'/blank) still
-# need a site bucket for the date/source-group rollups — fall back to the
-# domain, clearly marked so it can never collide with a real matched site
-# code (and so it surfaces honestly as unmatched revenue, not a false match).
-rill["site"] = rill.apply(
-    lambda r: r["site_code"] if r["site_code"] != ""
-    else f"(unmatched) {site_from_domain(r['Domain'])}", axis=1,
-)
-rill_data = rill[
-    rill["Revenue Source Type"].notna() & (rill["Revenue Source Type"].str.strip() != "")
-].copy()
-
-# ── SUMMARY METRICS ───────────────────────────────────────────────────────────
-
-n_ob     = int((gam["Line item type"] == "OB").sum())
-n_amazon = int((gam["Line item type"] == "AMAZON").sum())
+all_dates = sorted({
+    d for p in pairs if "date" in p.dims
+    for rep in (p.gam, p.rill) for d in rep.df.get("date", pd.Series(dtype=object)).dropna()
+})
+if all_dates:
+    _fmt = lambda d: d.strftime("%-d %b %Y")
+    date_range_str = _fmt(all_dates[0]) if len(all_dates) == 1 else f"{_fmt(all_dates[0])} – {_fmt(all_dates[-1])}"
+else:
+    date_range_str = "No date dimension in these files"
+site_names = [p.name for p in pairs]
 
 section("📌", "Data Summary")
-c1, c2, c3, c4, c5, c6 = st.columns(6)
-c1.metric("GAM Rows",   f"{len(gam_raw):,}")
-c2.metric("Rill Rows",  f"{len(rill_raw):,}")
-c3.metric("Date Range", f"{len(dates)} day{'s' if len(dates) != 1 else ''}")
-c4.metric("Sites",      f"{len(sites)}")
-c5.metric("→ OB",       f"{n_ob:,}",     help="Blank Line item type + blank Order")
-c6.metric("→ AMAZON",   f"{n_amazon:,}", help="Price priority with Amazon/APS/TAM orders")
+cols = st.columns(2 + len(pairs))
+cols[0].metric("Sites", f"{len(pairs)}")
+cols[1].metric("Date Range", f"{len(all_dates)} day{'s' if len(all_dates) != 1 else ''}" if all_dates else "—")
+for i, p in enumerate(pairs):
+    cols[2 + i].metric(p.name, f"{len(p.gam.df):,} / {len(p.rill.df):,}",
+                       help="GAM rows / Rill rows")
 
-# ── ORDERS ────────────────────────────────────────────────────────────────────
+badges = []
+for p in pairs:
+    mets = " ".join(f"<span class='format-badge'>{recon.METRICS[m][2]}</span>" for m in p.metrics)
+    dims = " ".join(f"<span class='format-badge'>{d.replace('_', ' ')}</span>" for d in sorted(p.dims))
+    badges.append(f"<div style='margin:0.2rem 0'><strong style='color:{TEXT}'>{p.name}</strong> — "
+                  f"comparing: {mets}{('  ·  dims: ' + dims) if dims else ''}</div>")
+st.markdown("\n".join(badges), unsafe_allow_html=True)
 
-n_excl = len(st.session_state.excl_set)
-n_rc   = len(st.session_state.reassignments)
-orders_sub = "search · check rows · choose Exclude or Reclassify · Save"
-if n_excl or n_rc:
-    parts = []
-    if n_excl: parts.append(f"{n_excl} excluded")
-    if n_rc:   parts.append(f"{n_rc} reclassified")
-    orders_sub += "  ·  " + " · ".join(parts)
+# Date-range alignment check — skew here silently corrupts every number.
+for p in pairs:
+    if "date" in p.gam.dims and "date" in p.rill.dims:
+        g_dates = set(p.gam.df["date"].dropna())
+        r_dates = set(p.rill.df["date"].dropna())
+        if g_dates != r_dates:
+            only_g, only_r = sorted(g_dates - r_dates), sorted(r_dates - g_dates)
+            st.warning(
+                f"⚠️ **{p.name}**: the two files cover different dates — "
+                f"GAM-only: {only_g or '—'} · Rill-only: {only_r or '—'}. "
+                "Discrepancies will be inflated on those days."
+            )
 
-section("📋", "Orders", orders_sub)
+# ── ORDERS (only for revenue-format GAM files) ────────────────────────────────
 
-# Build effective table (reflects current reassignments)
-gam_eff = gam.copy()
-for order, new_type in st.session_state.reassignments.items():
-    gam_eff.loc[gam_eff["Order"] == order, "Line item type"] = new_type
-gam_eff["source_group"] = gam_eff["Line item type"].map(GAM_GROUP)
+order_pairs = [p for p in pairs if "order" in p.gam.df.columns]
+order_type_map = {}
+if order_pairs:
+    n_excl = len(st.session_state.excl_set)
+    n_rc   = len(st.session_state.reassignments)
+    orders_sub = "search · check rows · choose Exclude or Reclassify · Save"
+    if n_excl or n_rc:
+        parts = []
+        if n_excl: parts.append(f"{n_excl} excluded")
+        if n_rc:   parts.append(f"{n_rc} reclassified")
+        orders_sub += "  ·  " + " · ".join(parts)
+    section("📋", "Orders", orders_sub)
 
-orders_df = (
-    gam_eff[gam_eff["Order"].notna() & (gam_eff["Order"] != "OB")]
-    .groupby(["Order", "Line item type"])
-    .agg(Revenue=("Total CPM and CPC revenue", "sum"),
-         Impressions=("Total impressions", "sum"))
-    .reset_index()
-)
-orders_df["Bucket"] = orders_df["Line item type"].map(GAM_GROUP).fillna("—")
-excl_set_cur = set(st.session_state.excl_set)
-orders_df["Status"] = orders_df["Order"].apply(
-    lambda o: "🚫 Excluded" if o in excl_set_cur
-    else ("🔄 Reclassified" if o in st.session_state.reassignments else "")
-)
-orders_df = orders_df.sort_values(["Bucket", "Revenue"], ascending=[True, False]).reset_index(drop=True)
-
-grid_df = orders_df[["Order", "Line item type", "Bucket", "Revenue", "Impressions", "Status"]].copy()
-grid_df = grid_df.rename(columns={"Line item type": "Type"})
-
-# ── Action panel ──────────────────────────────────────────────────────────────
-
-ca, cb, cc = st.columns([2, 3, 1])
-with ca:
-    action_choice = st.radio(
-        "Action", ["Exclude", "Reclassify"],
-        horizontal=True, key="ord_action",
-        label_visibility="collapsed",
-    )
-with cb:
-    if action_choice == "Reclassify":
-        reclass_to = st.selectbox(
-            "Move to", RECLASSIFY_TARGETS, key="ord_reclass_to",
-            label_visibility="collapsed",
+    frames = []
+    for p in order_pairs:
+        df = p.gam.df
+        sub = df[df["order"].notna() & (df["order"] != "OB")]
+        if sub.empty:
+            continue
+        agg = sub.groupby(["order", "line_item_type"])[p.gam.metrics].sum().reset_index()
+        agg.insert(0, "site", p.name)
+        frames.append(agg)
+        order_type_map.update(
+            sub.drop_duplicates("order").set_index("order")["line_item_type"].to_dict()
         )
-    else:
-        st.caption("Selected orders will be removed from all comparisons.")
-        reclass_to = None
-with cc:
-    save_clicked = st.button("💾 Save", type="primary", key="ord_save")
 
-# ── Last save confirmation (persists until next save replaces it) ─────────────
+    if frames:
+        orders_df = pd.concat(frames, ignore_index=True)
+        orders_df["Bucket"] = orders_df["line_item_type"].map(recon.GAM_GROUP).fillna("—")
+        excl_cur = {(s, o) for s, o in st.session_state.excl_set}
+        orders_df["Status"] = [
+            "🚫 Excluded" if (s, o) in excl_cur
+            else ("🔄 Reclassified" if f"{s}||{o}" in st.session_state.reassignments else "")
+            for s, o in zip(orders_df["site"], orders_df["order"])
+        ]
+        metric_cols = [m for m in recon.METRICS if m in orders_df.columns]
+        sort_metric = metric_cols[0] if metric_cols else "order"
+        orders_df = orders_df.sort_values(["Bucket", sort_metric], ascending=[True, False]).reset_index(drop=True)
 
-if st.session_state.last_save_msg:
-    st.success(st.session_state.last_save_msg)
+        grid_df = orders_df.rename(columns={
+            "site": "Site", "order": "Order", "line_item_type": "Type",
+            **{m: recon.METRICS[m][2] for m in metric_cols},
+        })[["Site", "Order", "Type", "Bucket", *[recon.METRICS[m][2] for m in metric_cols], "Status"]]
 
-# ── AG Grid ───────────────────────────────────────────────────────────────────
+        ca, cb, cc = st.columns([2, 3, 1])
+        with ca:
+            action_choice = st.radio("Action", ["Exclude", "Reclassify"], horizontal=True,
+                                     key="ord_action", label_visibility="collapsed")
+        with cb:
+            if action_choice == "Reclassify":
+                reclass_to = st.selectbox("Move to", RECLASSIFY_TARGETS, key="ord_reclass_to",
+                                          label_visibility="collapsed")
+            else:
+                st.caption("Selected orders will be removed from all comparisons.")
+                reclass_to = None
+        with cc:
+            save_clicked = st.button("💾 Save", type="primary", key="ord_save")
 
-gb = GridOptionsBuilder.from_dataframe(grid_df)
-gb.configure_selection("multiple", use_checkbox=True, header_checkbox=True)
-gb.configure_default_column(
-    sortable=True, resizable=True,
-    filter="agTextColumnFilter",
-    floatingFilter=False,
-)
-gb.configure_column(
-    "Order", min_width=300, flex=4,
-    filter="agTextColumnFilter",
-    floatingFilter=True,
-    filterParams={
-        "filterOptions": ["contains"],
-        "defaultOption": "contains",
-        "suppressAndOrCondition": True,
-    },
-)
-gb.configure_column("Type",   min_width=150, flex=2)
-gb.configure_column("Bucket", min_width=190, flex=2)
-gb.configure_column(
-    "Revenue", min_width=115, flex=1,
-    filter="agNumberColumnFilter",
-    type=["numericColumn"],
-    valueFormatter="'$' + Number(value).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})",
-)
-gb.configure_column(
-    "Impressions", min_width=120, flex=1,
-    filter="agNumberColumnFilter",
-    type=["numericColumn"],
-    valueFormatter="Number(value).toLocaleString('en-US')",
-)
-gb.configure_column("Status", min_width=130, flex=1, filter=False, sortable=False)
-gb.configure_grid_options(
-    rowHeight=38,
-    headerHeight=42,
-    floatingFiltersHeight=56,
-    suppressMovableColumns=True,
-    animateRows=True,
-    tooltipShowDelay=300,
-)
-grid_opts = gb.build()
+        if st.session_state.last_save_msg:
+            st.success(st.session_state.last_save_msg)
 
-_neon_grad_end = "#1e3a5f" if dm else "#dbeafe"
-_style_filter = JsCode(f"""
-function(params) {{
-    var attempts = 0;
-    function apply() {{
-        var row = document.querySelector('.ag-header-row-floating-filter');
-        var wrappers = document.querySelectorAll('.ag-text-field-input-wrapper');
-        var inputs = document.querySelectorAll('.ag-text-field-input');
-        if ((!row || wrappers.length === 0) && attempts < 40) {{
-            attempts++;
-            setTimeout(apply, 100);
-            return;
-        }}
-        if (row) {{
-            row.style.height = '56px';
-            row.style.background = 'linear-gradient(90deg,{ACCENT_BG} 0%,{_neon_grad_end} 100%)';
-            row.style.borderTop = '2px solid {ACCENT}';
-            row.style.borderBottom = '2px solid {ACCENT}';
-        }}
-        wrappers.forEach(function(w) {{
-            w.style.height = '40px';
-            w.style.border = '2px solid {ACCENT}';
-            w.style.borderRadius = '10px';
-            w.style.background = '{BG}';
-            w.style.boxShadow = '0 0 12px {ACCENT_RING}';
-            w.style.display = 'flex';
-            w.style.alignItems = 'center';
-            w.style.paddingLeft = '10px';
-        }});
-        inputs.forEach(function(inp) {{
-            inp.style.fontSize = '0.95rem';
-            inp.style.fontWeight = '500';
-            inp.style.color = '{TEXT}';
-            inp.style.background = 'transparent';
-            inp.style.border = 'none';
-            inp.style.outline = 'none';
-            inp.style.width = '100%';
-            inp.placeholder = '🔍 type to filter…';
-        }});
-    }}
-    setTimeout(apply, 100);
-}}
-""")
-grid_opts["onGridReady"] = _style_filter
-grid_opts["onFirstDataRendered"] = _style_filter
+        gb = GridOptionsBuilder.from_dataframe(grid_df)
+        gb.configure_selection("multiple", use_checkbox=True, header_checkbox=True)
+        gb.configure_default_column(sortable=True, resizable=True, filter="agTextColumnFilter")
+        gb.configure_column("Order", min_width=280, flex=4, floatingFilter=True,
+                            filterParams={"filterOptions": ["contains"], "defaultOption": "contains",
+                                          "suppressAndOrCondition": True})
+        gb.configure_column("Site", min_width=120, flex=1)
+        for m in metric_cols:
+            label, kind = recon.METRICS[m][2], recon.METRICS[m][3]
+            fmt = ("'$' + Number(value).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})"
+                   if kind == "money" else "Number(value).toLocaleString('en-US')")
+            gb.configure_column(label, min_width=115, flex=1, filter="agNumberColumnFilter",
+                                type=["numericColumn"], valueFormatter=fmt)
+        gb.configure_column("Status", min_width=130, flex=1, filter=False, sortable=False)
+        gb.configure_grid_options(rowHeight=38, headerHeight=42, suppressMovableColumns=True, animateRows=True)
+        grid_opts = gb.build()
 
-ag_key = f"orders_grid_{st.session_state.grid_version}"
+        ag_key = f"orders_grid_{st.session_state.grid_version}"
+        response = AgGrid(
+            grid_df, gridOptions=grid_opts,
+            update_mode=GridUpdateMode.SELECTION_CHANGED,
+            data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
+            height=420, theme="streamlit", fit_columns_on_grid_load=True,
+            allow_unsafe_jscode=True, key=ag_key,
+        )
 
-# SELECTION_CHANGED fires a Python rerun the moment the user checks/unchecks
-# a row, so we capture selection into session state immediately.
-# On the Save-button rerun the response may be empty (grid re-renders first),
-# so we fall back to the last stored selection from _order_sel.
-response = AgGrid(
-    grid_df,
-    gridOptions=grid_opts,
-    update_mode=GridUpdateMode.SELECTION_CHANGED,
-    data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
-    height=460,
-    theme="streamlit",
-    fit_columns_on_grid_load=True,
-    allow_unsafe_jscode=True,
-    key=ag_key,
-)
-
-# Always parse current response selection
-_sel_raw = response.get("selected_rows") or []
-if isinstance(_sel_raw, pd.DataFrame):
-    _current_sel = _sel_raw["Order"].tolist() if not _sel_raw.empty else []
-else:
-    _current_sel = [r["Order"] for r in _sel_raw] if _sel_raw else []
-
-# Persist selection; only overwrite when not the Save rerun (Save rerun may
-# briefly return empty before the grid re-renders with updated Status).
-if not save_clicked:
-    st.session_state._order_sel = _current_sel
-
-# ── Handle Save ───────────────────────────────────────────────────────────────
-
-if save_clicked:
-    # Prefer live response; fall back to last stored selection
-    sel_orders = _current_sel or st.session_state._order_sel
-
-    if sel_orders:
-        names = ", ".join(sel_orders[:3]) + (f" +{len(sel_orders)-3} more" if len(sel_orders) > 3 else "")
-        if action_choice == "Exclude":
-            st.session_state.excl_set = list(set(st.session_state.excl_set + sel_orders))
-            st.session_state.last_save_msg = f"✅ Excluded {len(sel_orders)} order(s): {names}"
+        _sel_raw = response.get("selected_rows")
+        if isinstance(_sel_raw, pd.DataFrame):
+            _current_sel = list(zip(_sel_raw["Site"], _sel_raw["Order"])) if not _sel_raw.empty else []
+        elif _sel_raw:
+            _current_sel = [(r["Site"], r["Order"]) for r in _sel_raw]
         else:
-            for o in sel_orders:
-                st.session_state.reassignments[o] = reclass_to
-            st.session_state.last_save_msg = f"✅ Reclassified {len(sel_orders)} order(s) → {reclass_to}: {names}"
-        st.session_state.grid_version += 1   # force grid remount so Status column refreshes
-        st.rerun()
-    else:
-        st.warning(
-            "No rows selected — tick the checkbox on the left side of each row, "
-            "then click 💾 Save."
-        )
+            _current_sel = []
+        if not save_clicked:
+            st.session_state._order_sel = [list(t) for t in _current_sel]
 
-# ── Changes summary (always visible, QA before Run Analysis) ──────────────────
+        if save_clicked:
+            sel = _current_sel or [tuple(t) for t in st.session_state._order_sel]
+            if sel:
+                names = ", ".join(o for _, o in sel[:3]) + (f" +{len(sel) - 3} more" if len(sel) > 3 else "")
+                if action_choice == "Exclude":
+                    merged = {tuple(t) for t in st.session_state.excl_set} | set(sel)
+                    st.session_state.excl_set = [list(t) for t in merged]
+                    st.session_state.last_save_msg = f"✅ Excluded {len(sel)} order(s): {names}"
+                else:
+                    for s, o in sel:
+                        st.session_state.reassignments[f"{s}||{o}"] = reclass_to
+                    st.session_state.last_save_msg = f"✅ Reclassified {len(sel)} order(s) → {reclass_to}: {names}"
+                st.session_state.grid_version += 1
+                st.rerun()
+            else:
+                st.warning("No rows selected — tick the checkbox on the left of each row, then click 💾 Save.")
 
-n_excl = len(st.session_state.excl_set)
-n_rc   = len(st.session_state.reassignments)
-total_changes = n_excl + n_rc
+        # Pending-changes review
+        n_excl = len(st.session_state.excl_set)
+        n_rc = len(st.session_state.reassignments)
+        if n_excl + n_rc:
+            with st.expander(f"Review & undo changes ({n_excl + n_rc} total)", expanded=False):
+                undo_excl, undo_rc = [], []
+                for s, o in st.session_state.excl_set:
+                    c1, c2 = st.columns([9, 1])
+                    c1.markdown(f"🚫 {s} — {o}")
+                    if c2.button("Undo", key=f"undo_e_{s}_{o}"):
+                        undo_excl.append([s, o])
+                for key_, new_t in list(st.session_state.reassignments.items()):
+                    s, o = key_.split("||", 1)
+                    c1, c2 = st.columns([9, 1])
+                    c1.markdown(f"🔄 {s} — {o}: {order_type_map.get(o, '?')} → **{new_t}**")
+                    if c2.button("Undo", key=f"undo_r_{key_}"):
+                        undo_rc.append(key_)
+                st.divider()
+                if st.button("🗑 Clear ALL changes", key="clear_all"):
+                    st.session_state.excl_set = []
+                    st.session_state.reassignments = {}
+                    st.session_state.last_save_msg = ""
+                    st.session_state.grid_version += 1
+                    st.rerun()
+                if undo_excl:
+                    st.session_state.excl_set = [t for t in st.session_state.excl_set if t not in undo_excl]
+                    st.session_state.grid_version += 1
+                    st.rerun()
+                if undo_rc:
+                    for key_ in undo_rc:
+                        del st.session_state.reassignments[key_]
+                    st.session_state.grid_version += 1
+                    st.rerun()
 
-st.divider()
 
-if total_changes == 0:
-    st.caption(
-        "No changes yet. Use the table above to exclude orders from the analysis "
-        "or move them to a different bucket."
-    )
-else:
-    badge_parts = []
-    if n_excl: badge_parts.append(f"🚫 {n_excl} excluded")
-    if n_rc:   badge_parts.append(f"🔄 {n_rc} reclassified")
-    st.markdown(
-        f"<div style='background:{ACCENT_BG};border:1.5px solid {ACCENT_RING};"
-        f"border-radius:10px;padding:0.7rem 1.1rem;margin-bottom:0.5rem;"
-        f"font-weight:600;color:{ACCENT};font-size:0.92rem'>"
-        f"📋 Pending changes — {' · '.join(badge_parts)} — "
-        f"these will be applied when you click <strong>▶ Run Analysis</strong></div>",
-        unsafe_allow_html=True,
-    )
+def apply_order_changes(pairs_in):
+    """Order exclusions/reclassifications → new SitePairs (source data untouched)."""
+    excl = {tuple(t) for t in st.session_state.excl_set}
+    reass = st.session_state.reassignments
+    if not excl and not reass:
+        return pairs_in
+    out = []
+    for p in pairs_in:
+        df = p.gam.df
+        if "order" not in df.columns:
+            out.append(p)
+            continue
+        df = df.copy()
+        for key_, new_t in reass.items():
+            s, o = key_.split("||", 1)
+            if s == p.name:
+                df.loc[df["order"] == o, "line_item_type"] = new_t
+        df["source_group"] = df["line_item_type"].map(recon.GAM_GROUP)
+        drop = {o for s, o in excl if s == p.name}
+        if drop:
+            df = df[~df["order"].isin(drop)]
+        out.append(recon.SitePair(
+            p.name,
+            recon.Report("gam", df, p.gam.metrics, p.gam.dims, p.gam.warnings),
+            p.rill,
+        ))
+    return out
 
-    exp_label = f"Review & undo changes ({total_changes} total)"
-    with st.expander(exp_label, expanded=True):
-        undo_excl, undo_rc = [], []
-
-        if st.session_state.excl_set:
-            st.markdown("**Exclusions** — these orders are removed from all comparisons")
-            for o in st.session_state.excl_set:
-                c1, c2 = st.columns([9, 1])
-                c1.markdown(f"🚫 {o}")
-                if c2.button("Undo", key=f"undo_e_{o}"): undo_excl.append(o)
-
-        if st.session_state.reassignments:
-            if st.session_state.excl_set:
-                st.markdown("")
-            st.markdown("**Reclassifications** — these orders are moved to a different bucket")
-            for o, new_t in list(st.session_state.reassignments.items()):
-                orig = order_type_map.get(o, "?")
-                c1, c2 = st.columns([9, 1])
-                c1.markdown(f"🔄 {o} — {orig} → **{new_t}**")
-                if c2.button("Undo", key=f"undo_r_{o}"): undo_rc.append(o)
-
-        st.divider()
-        if st.button("🗑 Clear ALL changes", key="clear_all"):
-            st.session_state.excl_set = []
-            st.session_state.reassignments = {}
-            st.session_state.last_save_msg = ""
-            st.session_state.grid_version += 1
-            st.rerun()
-
-        if undo_excl:
-            st.session_state.excl_set = [o for o in st.session_state.excl_set if o not in undo_excl]
-            st.session_state.grid_version += 1
-            st.rerun()
-        if undo_rc:
-            for o in undo_rc: del st.session_state.reassignments[o]
-            st.session_state.grid_version += 1
-            st.rerun()
-
-# ── APPLY CHANGES TO GAM ──────────────────────────────────────────────────────
-
-gam_processed = gam.copy()
-if st.session_state.reassignments:
-    for order, new_type in st.session_state.reassignments.items():
-        gam_processed.loc[gam_processed["Order"] == order, "Line item type"] = new_type
-    gam_processed["source_group"] = gam_processed["Line item type"].map(GAM_GROUP)
-
-excl_set_final = set(st.session_state.excl_set)
-gam_final = (
-    gam_processed[~gam_processed["Order"].isin(excl_set_final)].copy()
-    if excl_set_final else gam_processed.copy()
-)
 
 # ── WAIT FOR RUN ──────────────────────────────────────────────────────────────
 
@@ -1215,123 +853,51 @@ if not st.session_state.report_ready:
     st.info("👈  When ready, click **Run Analysis** in the sidebar to generate the report.")
     st.stop()
 
-# ── BUILD ALL TABLES ──────────────────────────────────────────────────────────
+# ── BUILD & RENDER ────────────────────────────────────────────────────────────
 
-def agg_gam(keys):
-    return gam_final.groupby(keys).agg(
-        GAM_IMP=("Total impressions",         "sum"),
-        GAM_Rev=("Total CPM and CPC revenue", "sum"),
-    ).reset_index()
+pairs_eff = apply_order_changes(pairs)
+all_tables = recon.build_tables(pairs_eff)
+class_df = recon.classification_summary(pairs_eff)
 
-def agg_rill(keys):
-    return rill_data.groupby(keys).agg(
-        Rill_IMP=("Total Impressions", "sum"),
-        Rill_Rev=("Revenue",           "sum"),
-    ).reset_index()
-
-def agg_gam_grp(keys):
-    return gam_final[gam_final["source_group"].notna()].groupby(keys).agg(
-        GAM_IMP=("Total impressions",         "sum"),
-        GAM_Rev=("Total CPM and CPC revenue", "sum"),
-    ).reset_index()
-
-def agg_rill_grp(keys):
-    return rill_data[rill_data["source_group"].notna()].groupby(keys).agg(
-        Rill_IMP=("Total Impressions", "sum"),
-        Rill_Rev=("Revenue",           "sum"),
-    ).reset_index()
-
-l1  = build_disc(agg_gam(["Date"]),
-                 agg_rill(["Date"]),
-                 ["Date"], sort_by=["Date"])
-l2  = build_disc(agg_gam(["Date", "site"]),
-                 agg_rill(["Date", "site"]),
-                 ["Date", "site"], sort_by=["site", "Date"])
-l3  = build_disc(agg_gam_grp(["source_group"]),
-                 agg_rill_grp(["source_group"]),
-                 ["source_group"])
-l3b = build_disc(agg_gam_grp(["site", "source_group"]),
-                 agg_rill_grp(["site", "source_group"]),
-                 ["site", "source_group"], sort_by=["site", "source_group"])
-l3c = build_disc(agg_gam_grp(["Date", "site", "source_group"]),
-                 agg_rill_grp(["Date", "site", "source_group"]),
-                 ["Date", "site", "source_group"], sort_by=["site", "Date", "source_group"])
-
-gam_l4_all = (
-    gam_final[gam_final["ad_unit"] != ""]
-    .groupby(["site", "ad_unit"])
-    .agg(GAM_IMP=("Total impressions", "sum"), GAM_Rev=("Total CPM and CPC revenue", "sum"))
-    .reset_index()
-)
-rill_l4_all = (
-    rill_data[(rill_data["ad_unit"] != "") & (rill_data["site_code"] != "")]
-    .groupby(["site", "ad_unit"])
-    .agg(Rill_IMP=("Total Impressions", "sum"), Rill_Rev=("Revenue", "sum"))
-    .reset_index()
-)
-# Exact join on the full (site, ad_unit) code path — restrict to keys present
-# on both sides ("GAM ∩ Rill only"), same intersection semantics as before,
-# just keyed correctly so leaf codes that repeat across sections/sites
-# (e.g. every GB News section has its own 'mpu_1') never collide.
-common_keys = gam_l4_all.merge(rill_l4_all[["site", "ad_unit"]], on=["site", "ad_unit"])[["site", "ad_unit"]]
-if not common_keys.empty:
-    gam_l4  = gam_l4_all.merge(common_keys, on=["site", "ad_unit"])
-    rill_l4 = rill_l4_all.merge(common_keys, on=["site", "ad_unit"])
-    l4 = build_disc(gam_l4, rill_l4, ["site", "ad_unit"]).sort_values("GAM_Rev", ascending=False)
-else:
-    l4 = pd.DataFrame()
-
-all_tables = {
-    "L1 By Date":         l1,
-    "L2 Date x Site":     l2,
-    "L3 Source Group":    l3,
-    "L3b SrcGrp x Site":  l3b,
-    "L3c Full Drill":     l3c,
-    "L4 Ad Unit":         l4,
-}
+render_exec_summary(all_tables, class_df)
 
 # ── SHARE SECTION ─────────────────────────────────────────────────────────────
 
 section("🔗", "Share Report")
 
-lvl_to_sheet = {
-    "Level 1 — Overall by Date":             "L1 By Date",
-    "Level 2 — By Date × Site":              "L2 Date x Site",
-    "Level 3 — By Source Group":             "L3 Source Group",
-    "Level 3b — Source Group × Site":        "L3b SrcGrp x Site",
-    "Level 3c — Source Group × Site × Date": "L3c Full Drill",
-    "Level 4 — By Ad Unit":                  "L4 Ad Unit",
-}
-available_levels = [
-    lvl for lvl in ALL_LEVELS
-    if not all_tables[lvl_to_sheet[lvl]].empty
-]
+available_levels = [k for k in LEVELS if k in all_tables and not all_tables[k].empty]
 share_selection = st.multiselect(
     "Select tables to include in the shared link:",
     options=available_levels,
-    default=[l for l in available_levels if LEVEL_DEFAULTS.get(l, False)],
+    format_func=lambda k: LEVELS[k][1],
+    default=[k for k in available_levels if LEVELS[k][3]],
     key="share_levels",
 )
 
 if share_selection and st.button("🔗  Generate Shareable Link", type="primary"):
-    tables_to_share = {lvl_to_sheet[lvl]: all_tables[lvl_to_sheet[lvl]] for lvl in share_selection}
     meta = {
         "date_range":   date_range_str,
-        "sites":        sites,
+        "sites":        site_names,
         "generated_at": pd.Timestamp.now().strftime("%-d %b %Y, %H:%M"),
     }
+    encoded = encode_tables({k: all_tables[k] for k in share_selection}, meta)
+    if len(encoded) > URL_WARN_BYTES:
+        st.warning(
+            f"⚠️ This link is {len(encoded):,} characters — some browsers and chat apps truncate long URLs. "
+            "Deselect the Ad Unit level (usually the largest) for a safer link."
+        )
     st.session_state.link_generated = True
-    st.query_params["r"] = encode_tables(tables_to_share, meta)
+    st.query_params["r"] = encoded
 
 if st.session_state.link_generated:
     st.success(
         "✅ Shareable link generated! Copy the URL from your browser's address bar — "
-        "recipients see the full interactive report without uploading any files."
+        "recipients see the full report without uploading any files."
     )
-    st.caption("💡 The link encodes your report data. Anyone with it can open the interactive tables.")
+    st.caption("💡 The link encodes your report data. Anyone with it can open the tables.")
 elif not share_selection:
     st.warning("Select at least one table above to generate a link.")
 
-# ── RENDER REPORT ─────────────────────────────────────────────────────────────
+# ── REPORT ────────────────────────────────────────────────────────────────────
 
-render_report(all_tables, show_levels, date_range_str, sites)
+render_report(all_tables, show_levels, date_range_str, site_names)
